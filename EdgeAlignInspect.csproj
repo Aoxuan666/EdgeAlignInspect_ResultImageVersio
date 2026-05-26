@@ -1,0 +1,105 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" Condition="false" />
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{4B372863-62CF-4D85-96CE-9D92B45ED251}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <RootNamespace>EdgeAlignInspect</RootNamespace>
+    <AssemblyName>EdgeAlignInspect</AssemblyName>
+    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <Deterministic>true</Deterministic>
+    <RuntimeIdentifiers>win</RuntimeIdentifiers>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup>
+    <StartupObject />
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Data" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Xml" />
+    <Reference Include="HalconDotNet">
+      <HintPath>Lib\halcondotnet.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="Controls\CanvasRoiKind.cs" />
+    <Compile Include="Controls\CanvasRoiSelection.cs" />
+    <Compile Include="Controls\CircleBaseRoiPair.cs" />
+    <Compile Include="Controls\ColoredPolyline.cs" />
+    <Compile Include="Controls\HalconCanvas.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="Controls\SolidPoint.cs" />
+    <Compile Include="Forms\Form1.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Forms\Form2.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Forms\TestHostForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Geometry\CircleRoiF.cs" />
+    <Compile Include="Geometry\RotRectF.cs" />
+    <Compile Include="Models\BaseRoiInspectResult.cs" />
+    <Compile Include="Models\BaseRoiItem.cs" />
+    <Compile Include="Models\CaliperParameters.cs" />
+    <Compile Include="Models\CircleBaseRoiInspectResult.cs" />
+    <Compile Include="Models\CircleBaseRoiItem.cs" />
+    <Compile Include="Models\CirclePointRoiInspectResult.cs" />
+    <Compile Include="Models\CirclePointRoiItem.cs" />
+    <Compile Include="Models\DefectDetectMode.cs" />
+    <Compile Include="Models\DetectAngleReferenceMode.cs" />
+    <Compile Include="Models\DetectRoiInspectResult.cs" />
+    <Compile Include="Models\DetectRoiItem.cs" />
+    <Compile Include="Models\EdgeCircleFit.cs" />
+    <Compile Include="Models\EdgeInspectJob.cs" />
+    <Compile Include="Models\EdgeInspectJobCloneExtensions.cs" />
+    <Compile Include="Models\EdgeInspectResult.cs" />
+    <Compile Include="Models\EdgeLineFit.cs" />
+    <Compile Include="Models\EdgePointResult.cs" />
+    <Compile Include="Models\ReferenceBaseKind.cs" />
+    <Compile Include="Models\TemplateMatchParameters.cs" />
+    <Compile Include="Models\TemplateTeachData.cs" />
+    <Compile Include="Processing\TemplateEdgeInspectProcessor.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="Sdk\SdkResultImageSelfTest.cs" />
+    <Compile Include="Sdk\TemplateEdgeInspectSdk.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="App.config" />
+    <None Include="app.manifest" />
+    <None Include="packages.config" />
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>
