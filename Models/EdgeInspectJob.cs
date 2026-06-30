@@ -5,76 +5,48 @@ using System.Linq;
 namespace EdgeAlignInspect
 {
 	[Serializable]
-	/// <summary>
-	/// 一次边缘对位检测任务的完整配置。
-	/// </summary>
-	/// <remarks>
-	/// Job 保存模板 ROI、基准 ROI、检测 ROI、卡尺参数、模板示教数据、像素分辨率和外部公差等信息。
-	/// 上位机应保存配置完成后的 Job，并在后续自动检测时原样传入 SDK。
-	/// </remarks>
 	public sealed class EdgeInspectJob
 	{
-		/// <summary>线基准 ROI 数量上限；当前实现不做业务层数量限制。</summary>
 		public const int MaxBaseRoiCount = int.MaxValue;
 
-		/// <summary>模板匹配使用的参考 ROI；仅在 <see cref="Match"/> 启用时需要。</summary>
 		public RotRectF TemplateRoi { get; set; }
 
-		/// <summary>线基准 ROI 列表，每个 ROI 会拟合一条基准线。</summary>
 		public List<BaseRoiItem> BaseRois { get; set; } = new List<BaseRoiItem>();
 
-		/// <summary>圆基准 ROI 列表，每组由两个圆组成，两个圆心连线作为基准线。</summary>
 		public List<CircleBaseRoiItem> CircleBaseRois { get; set; } = new List<CircleBaseRoiItem>();
 
-		/// <summary>单圆基准点 ROI 列表，绑定后会取拟合圆心做点到自拟合切割边的整体距离判定。</summary>
 		public List<CirclePointRoiItem> CirclePointRois { get; set; } = new List<CirclePointRoiItem>();
 
-		/// <summary>检测 ROI 列表，每个 ROI 产生独立的边缘点和缺陷判定结果。</summary>
 		public List<DetectRoiItem> DetectItems { get; set; } = new List<DetectRoiItem>();
 
-		/// <summary>兼容旧版单检测 ROI 的全局基准线判定开关。</summary>
 		public bool UseReferenceLine { get; set; } = true;
 
-		/// <summary>模板匹配参数。</summary>
 		public TemplateMatchParameters Match { get; set; } = new TemplateMatchParameters();
 
-		/// <summary>线基准 ROI 默认卡尺参数。</summary>
 		public CaliperParameters BaseCaliper { get; set; } = CreateDefaultBaseCaliper();
 
-		/// <summary>圆基准 ROI 默认卡尺参数。</summary>
 		public CaliperParameters CircleCaliper { get; set; } = CreateDefaultCircleCaliper();
 
-		/// <summary>检测 ROI 默认卡尺参数。</summary>
 		public CaliperParameters DetectCaliper { get; set; } = CreateDefaultDetectCaliper();
 
-		/// <summary>全局缺陷检测模式。</summary>
 		public DefectDetectMode DetectMode { get; set; } = DefectDetectMode.Both;
 
-		/// <summary>模板示教后保存的 HALCON 模型数据。</summary>
 		public TemplateTeachData TeachData { get; set; } = new TemplateTeachData();
 
-		/// <summary>是否使用 SDK 运行时传入的外部毛刺公差。</summary>
 		public bool UseExternalBurrTolerance { get; set; } = false;
 
-		/// <summary>SDK 运行时传入的外部毛刺公差。</summary>
 		public double ExternalBurrTolerance { get; set; } = 0.0;
 
-		/// <summary>SDK 运行时传入的外部凹陷公差，单位为毫米。</summary>
 		public double ExternalDentTolerance { get; set; } = 0.0;
 
-		/// <summary>SDK 运行时传入的外部超边公差，单位为毫米。</summary>
 		public double ExternalOverEdgeTolerance { get; set; } = 0.0;
 
-		/// <summary>SDK 运行时传入的外部漏铜公差，单位为毫米。</summary>
 		public double ExternalCopperLeakTolerance { get; set; } = 0.0;
 
-		/// <summary>X 方向单像素代表的物理尺寸。</summary>
 		public double PixelResolutionX { get; set; } = 1.0;
 
-		/// <summary>Y 方向单像素代表的物理尺寸。</summary>
 		public double PixelResolutionY { get; set; } = 1.0;
 
-		/// <summary>兼容旧版接口的第一个线基准 ROI。</summary>
 		public RotRectF BaseRoi
 		{
 			get
@@ -87,7 +59,6 @@ namespace EdgeAlignInspect
 			}
 		}
 
-		/// <summary>兼容旧版接口的第一个检测 ROI。</summary>
 		public RotRectF DetectRoi
 		{
 			get
@@ -100,7 +71,6 @@ namespace EdgeAlignInspect
 			}
 		}
 
-		/// <summary>兼容旧版接口的第一个检测 ROI 名义距离，单位为像素。</summary>
 		public double NominalDistancePx
 		{
 			get
@@ -113,7 +83,6 @@ namespace EdgeAlignInspect
 			}
 		}
 
-		/// <summary>兼容旧版接口的第一个检测 ROI 毛刺公差，单位为像素。</summary>
 		public double BurrTolerancePx
 		{
 			get
@@ -126,7 +95,6 @@ namespace EdgeAlignInspect
 			}
 		}
 
-		/// <summary>兼容旧版接口的第一个检测 ROI 凹陷公差，单位为像素。</summary>
 		public double DentTolerancePx
 		{
 			get
@@ -139,16 +107,12 @@ namespace EdgeAlignInspect
 			}
 		}
 
-		/// <summary>当前配置是否具备模板示教的基本条件。</summary>
 		public bool IsReadyForTeach => !Match.Enabled || !TemplateRoi.IsEmpty;
 
-		/// <summary>是否存在需要绑定基准线的启用检测 ROI。</summary>
 		public bool RequiresAnyBaseRoi => DetectItems != null && DetectItems.Any((DetectRoiItem x) => x != null && x.Enabled && !x.Roi.IsEmpty && x.UseReferenceLine && x.ReferenceBaseKind != ReferenceBaseKind.CirclePoint);
 
-		/// <summary>是否存在使用自身拟合线判定的启用检测 ROI。</summary>
 		public bool HasAnySelfJudgeDetect => DetectItems != null && DetectItems.Any((DetectRoiItem x) => x != null && x.Enabled && !x.Roi.IsEmpty && (!x.UseReferenceLine || x.ReferenceBaseKind == ReferenceBaseKind.CirclePoint));
 
-		/// <summary>当前配置是否具备运行检测的基本条件。</summary>
 		public bool IsReadyForInspect
 		{
 			get
@@ -173,7 +137,6 @@ namespace EdgeAlignInspect
 			}
 		}
 
-		/// <summary>创建线基准 ROI 的默认卡尺参数。</summary>
 		public static CaliperParameters CreateDefaultBaseCaliper()
 		{
 			return new CaliperParameters
@@ -190,7 +153,6 @@ namespace EdgeAlignInspect
 			};
 		}
 
-		/// <summary>创建检测 ROI 的默认卡尺参数。</summary>
 		public static CaliperParameters CreateDefaultDetectCaliper()
 		{
 			return new CaliperParameters
@@ -207,7 +169,6 @@ namespace EdgeAlignInspect
 			};
 		}
 
-		/// <summary>创建圆基准 ROI 的默认卡尺参数。</summary>
 		public static CaliperParameters CreateDefaultCircleCaliper()
 		{
 			return new CaliperParameters
@@ -224,9 +185,6 @@ namespace EdgeAlignInspect
 			};
 		}
 
-		/// <summary>
-		/// 确保指定索引的线基准 ROI 存在，并返回该对象。
-		/// </summary>
 		public BaseRoiItem EnsureBaseRoi(int index)
 		{
 			if (index < 0)
@@ -253,9 +211,6 @@ namespace EdgeAlignInspect
 			return BaseRois[index];
 		}
 
-		/// <summary>
-		/// 确保指定索引的检测 ROI 存在，并返回该对象。
-		/// </summary>
 		public DetectRoiItem EnsureDetectItem(int index)
 		{
 			if (index < 0)
@@ -284,9 +239,6 @@ namespace EdgeAlignInspect
 			return DetectItems[index];
 		}
 
-		/// <summary>
-		/// 根据基准 ROI ID 解析当前列表中的索引，ID 不存在时回退到指定索引。
-		/// </summary>
 		public int ResolveBaseRoiIndex(string baseRoiId, int fallbackIndex)
 		{
 			if (BaseRois == null || BaseRois.Count <= 0)
@@ -315,9 +267,6 @@ namespace EdgeAlignInspect
 			return fallbackIndex;
 		}
 
-		/// <summary>
-		/// 根据圆基准 ROI ID 解析当前列表中的索引，ID 不存在时回退到指定索引。
-		/// </summary>
 		public int ResolveCircleBaseRoiIndex(string circleBaseRoiId, int fallbackIndex)
 		{
 			if (CircleBaseRois == null || CircleBaseRois.Count <= 0)
@@ -346,9 +295,6 @@ namespace EdgeAlignInspect
 			return fallbackIndex;
 		}
 
-		/// <summary>
-		/// 根据圆点基准 ROI ID 解析当前列表中的索引，ID 不存在时回退到指定索引。
-		/// </summary>
 		public int ResolveCirclePointRoiIndex(string circlePointRoiId, int fallbackIndex)
 		{
 			if (CirclePointRois == null || CirclePointRois.Count <= 0)
@@ -377,9 +323,6 @@ namespace EdgeAlignInspect
 			return fallbackIndex;
 		}
 
-		/// <summary>
-		/// 归一化检测 ROI 的基准绑定，使索引和 ID 与当前基准列表保持一致；绑定圆点基准时会转为自拟合线判定。
-		/// </summary>
 		public void NormalizeDetectBinding(DetectRoiItem item)
 		{
 			if (item == null)
@@ -396,7 +339,8 @@ namespace EdgeAlignInspect
 				}
 				else
 				{
-					int index = (item.CirclePointRoiIndex = ResolveCirclePointRoiIndex(item.CirclePointRoiId, item.CirclePointRoiIndex));
+					int num = (item.CirclePointRoiIndex = ResolveCirclePointRoiIndex(item.CirclePointRoiId, item.CirclePointRoiIndex));
+					int index = num;
 					item.CirclePointRoiId = CirclePointRois[index]?.Id ?? "";
 				}
 			}
@@ -409,8 +353,9 @@ namespace EdgeAlignInspect
 				}
 				else
 				{
-					int index = (item.CircleBaseRoiIndex = ResolveCircleBaseRoiIndex(item.CircleBaseRoiId, item.CircleBaseRoiIndex));
-					item.CircleBaseRoiId = CircleBaseRois[index]?.Id ?? "";
+					int num = (item.CircleBaseRoiIndex = ResolveCircleBaseRoiIndex(item.CircleBaseRoiId, item.CircleBaseRoiIndex));
+					int index2 = num;
+					item.CircleBaseRoiId = CircleBaseRois[index2]?.Id ?? "";
 				}
 			}
 			else if (BaseRois == null || BaseRois.Count <= 0)
@@ -420,12 +365,12 @@ namespace EdgeAlignInspect
 			}
 			else
 			{
-				int index2 = (item.BaseRoiIndex = ResolveBaseRoiIndex(item.BaseRoiId, item.BaseRoiIndex));
-				item.BaseRoiId = BaseRois[index2]?.Id ?? "";
+				int num = (item.BaseRoiIndex = ResolveBaseRoiIndex(item.BaseRoiId, item.BaseRoiIndex));
+				int index3 = num;
+				item.BaseRoiId = BaseRois[index3]?.Id ?? "";
 			}
 		}
 
-		/// <summary>取得指定线基准 ROI 的卡尺参数；未单独配置时返回全局默认参数。</summary>
 		public CaliperParameters ResolveBaseCaliper(int index)
 		{
 			if (BaseRois != null && index >= 0 && index < BaseRois.Count && BaseRois[index] != null && BaseRois[index].Caliper != null)
@@ -435,7 +380,6 @@ namespace EdgeAlignInspect
 			return BaseCaliper ?? CreateDefaultBaseCaliper();
 		}
 
-		/// <summary>取得指定检测 ROI 的卡尺参数；未单独配置时返回全局默认参数。</summary>
 		public CaliperParameters ResolveDetectCaliper(int index)
 		{
 			if (DetectItems != null && index >= 0 && index < DetectItems.Count && DetectItems[index] != null && DetectItems[index].Caliper != null)
@@ -466,15 +410,15 @@ namespace EdgeAlignInspect
 				{
 					cp.Sigma = ((caliperParameters.Sigma > 0.0) ? caliperParameters.Sigma : 1.0);
 				}
-			if (cp.Threshold <= 0.0)
-			{
-				cp.Threshold = ((caliperParameters.Threshold > 0.0) ? caliperParameters.Threshold : 1.0);
-			}
-			if (cp.SearchOutward < 0.0)
-			{
-				cp.SearchOutward = ((caliperParameters.SearchOutward > 0.0) ? caliperParameters.SearchOutward : 0.0);
-			}
-			if (string.IsNullOrWhiteSpace(cp.MeasureInterpolation))
+				if (cp.Threshold <= 0.0)
+				{
+					cp.Threshold = ((caliperParameters.Threshold > 0.0) ? caliperParameters.Threshold : 1.0);
+				}
+				if (cp.SearchOutward < 0.0)
+				{
+					cp.SearchOutward = ((caliperParameters.SearchOutward > 0.0) ? caliperParameters.SearchOutward : 0.0);
+				}
+				if (string.IsNullOrWhiteSpace(cp.MeasureInterpolation))
 				{
 					cp.MeasureInterpolation = (string.IsNullOrWhiteSpace(caliperParameters.MeasureInterpolation) ? "bicubic" : caliperParameters.MeasureInterpolation);
 				}
@@ -489,12 +433,6 @@ namespace EdgeAlignInspect
 			}
 		}
 
-		/// <summary>
-		/// 修正空集合、空参数、非法数值和失效 ROI，并补齐默认卡尺参数。
-		/// </summary>
-		/// <remarks>
-		/// 该方法会移除空 ROI，适合运行检测前使用；如果需要保留编辑态草稿 ROI，应避免直接调用。
-		/// </remarks>
 		public void Normalize()
 		{
 			if (BaseRois == null)

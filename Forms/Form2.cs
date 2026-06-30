@@ -59,7 +59,7 @@ namespace EdgeAlignInspect
 					{
 						_job = BuildMockJob(bitmap);
 					}
-					EdgeInspectJob edgeInspectJob = _sdk.OpenSetupDialog(bitmap, _job);
+					EdgeInspectJob edgeInspectJob = _sdk.OpenSetupDialog(bitmap, _job, CreateToleranceOptions());
 					if (edgeInspectJob == null)
 					{
 						MessageBox.Show(this, "用户取消了参数设置。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
@@ -196,6 +196,19 @@ namespace EdgeAlignInspect
 			});
 			edgeInspectJob.Normalize();
 			return edgeInspectJob;
+		}
+
+		private static EdgeInspectionToleranceOptions CreateToleranceOptions()
+		{
+			return new EdgeInspectionToleranceOptions
+			{
+				BurrToleranceMm = 0.05,
+				DentToleranceMm = 0.05,
+				OverEdgeToleranceMm = 0.05,
+				CopperLeakToleranceMm = 0.05,
+				PixelResolutionX = 0.01,
+				PixelResolutionY = 0.01
+			};
 		}
 
 		protected override void Dispose(bool disposing)

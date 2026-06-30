@@ -24,10 +24,13 @@ EdgeAlignInspect.TemplateEdgeInspectSdk
 主要提供两个方法：
 
 ```csharp
-EdgeInspectJob OpenSetupDialog(Bitmap image, EdgeInspectJob currentJob)
+EdgeInspectJob OpenSetupDialog(
+    Bitmap image,
+    EdgeInspectJob currentJob,
+    EdgeInspectionToleranceOptions options)
 ```
 
-用于打开参数配置窗口。配置完成并确认后，会返回新的 `EdgeInspectJob`。上位机需要保存这个 Job，后续检测时直接传入。
+用于打开参数配置窗口。配置完成并确认后，会返回新的 `EdgeInspectJob`。上位机需要保存这个 Job，后续检测时直接传入。`options` 会传入页面，用于页面标准距离 mm 换算、解析度显示以及页面内运行检测。
 
 ```csharp
 EdgeInspectResult RunInspection(
@@ -60,7 +63,17 @@ TemplateEdgeInspectSdk sdk = new TemplateEdgeInspectSdk();
 
 using (Bitmap image = new Bitmap("sample.bmp"))
 {
-    EdgeInspectJob job = sdk.OpenSetupDialog(image, null);
+    EdgeInspectionToleranceOptions options = new EdgeInspectionToleranceOptions
+    {
+        BurrToleranceMm = 0.05,
+        DentToleranceMm = 0.05,
+        OverEdgeToleranceMm = 0.05,
+        CopperLeakToleranceMm = 0.05,
+        PixelResolutionX = 0.01,
+        PixelResolutionY = 0.01
+    };
+
+    EdgeInspectJob job = sdk.OpenSetupDialog(image, null, options);
 
     if (job != null)
     {

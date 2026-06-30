@@ -8,12 +8,25 @@ using HalconDotNet;
 
 namespace EdgeAlignInspect
 {
-	/// <summary>
-	/// 基于 HALCON 模板匹配和卡尺测量的核心检测处理器。
-	/// </summary>
-	/// <remarks>
-	/// 处理器负责模板示教、运行时 ROI 坐标变换、线/圆基准拟合、检测 ROI 找边以及毛刺/凹陷判定。
-	/// </remarks>
+	public sealed class TemplateMatchQuickTestResult
+	{
+		public bool Found { get; set; }
+
+		public double Score { get; set; }
+
+		public double Row { get; set; }
+
+		public double Col { get; set; }
+
+		public double Angle { get; set; }
+
+		public RotRectF TemplateRoiCur { get; set; }
+
+		public List<PointF> MatchContourPoints { get; set; } = new List<PointF>();
+
+		public string Message { get; set; }
+	}
+
 	public sealed class TemplateEdgeInspectProcessor : IDisposable
 	{
 		private struct PtD
@@ -22,14 +35,44 @@ namespace EdgeAlignInspect
 
 			public double Y;
 
-			/// <summary>创建双精度图像点。</summary>
-			/// <param name="x">列坐标。</param>
-			/// <param name="y">行坐标。</param>
 			public PtD(double x, double y)
 			{
 				X = x;
 				Y = y;
 			}
+		}
+
+		private sealed class ContourCandidate
+		{
+			public List<PointF> Points = new List<PointF>();
+
+			public double Length;
+
+			public double Coverage;
+
+			public double Score => Length + Coverage * 0.05;
+		}
+
+		private sealed class FeatureSegment
+		{
+			public List<PointF> Points = new List<PointF>();
+
+			public double Length;
+
+			public double Score => Length;
+		}
+
+		private sealed class EdgePointSample
+		{
+			public int CandidateIndex;
+
+			public int PointIndex;
+
+			public PointF Point;
+
+			public double U;
+
+			public double V;
 		}
 
 		private sealed class SignedLine
@@ -40,10 +83,6 @@ namespace EdgeAlignInspect
 
 			public double NCol { get; }
 
-			/// <summary>创建带方向法向量的直线。</summary>
-			/// <param name="p1">直线上的参考点。</param>
-			/// <param name="nRow">行方向法向量分量。</param>
-			/// <param name="nCol">列方向法向量分量。</param>
 			private SignedLine(PointF p1, double nRow, double nCol)
 			{
 				_p1 = p1;
@@ -56,10 +95,6 @@ namespace EdgeAlignInspect
 				NCol = nCol / num;
 			}
 
-			/// <summary>根据线段生成有符号距离直线。</summary>
-			/// <param name="a">线段起点。</param>
-			/// <param name="b">线段终点。</param>
-			/// <returns>用于距离计算的有符号直线。</returns>
 			public static SignedLine FromLine(PointF a, PointF b)
 			{
 				double num = b.X - a.X;
@@ -74,21 +109,12 @@ namespace EdgeAlignInspect
 				return new SignedLine(a, num, 0.0 - num2);
 			}
 
-			/// <summary>计算点到当前有符号线的距离。</summary>
-			/// <param name="p">待计算的图像点。</param>
-			/// <returns>带方向的距离，单位为像素。</returns>
 			public double SignedDistance(PointF p)
 			{
 				return (double)(p.Y - _p1.Y) * NRow + (double)(p.X - _p1.X) * NCol;
 			}
 		}
 
-		/// <summary>
-		/// 根据参考图和模板 ROI 生成可持久化的 HALCON 模板数据。
-		/// </summary>
-		/// <param name="refBmp">参考图像。</param>
-		/// <param name="job">包含模板 ROI 和模板匹配参数的任务配置。</param>
-		/// <returns>模板示教数据；未启用模板匹配时返回空模板数据。</returns>
 		public TemplateTeachData Teach(Bitmap refBmp, EdgeInspectJob job)
 		{
 			if (refBmp == null)
@@ -110,6 +136,13 @@ namespace EdgeAlignInspect
 			{
 				throw new InvalidOperationException("未设置模板ROI。");
 			}
+			if (job.Match.UseOuterContourOnly)
+			{
+				List<PointF> featurePoints = (job.TeachData != null && job.TeachData.FeaturePoints != null && job.TeachData.FeaturePoints.Count > 0) ? new List<PointF>(job.TeachData.FeaturePoints) : ExtractOuterContourPoints(refBmp, job);
+				TemplateTeachData teachData = TeachFromOuterContourPoints(refBmp, job, featurePoints);
+				teachData.EraseStrokes = CloneEraseStrokes(job.TeachData?.EraseStrokes);
+				return teachData;
+			}
 			HImage hImage = null;
 			GCHandle grayHandle = default(GCHandle);
 			HObject rect = null;
@@ -121,21 +154,12 @@ namespace EdgeAlignInspect
 				GenRectangle2(job.TemplateRoi, out rect);
 				HOperatorSet.ReduceDomain(hImage, rect, out imageReduced);
 				HOperatorSet.CreateShapeModel(imageReduced, job.Match.NumLevels, job.Match.AngleStart, job.Match.AngleExtent, "auto", "auto", "use_polarity", 20, 10, out modelID);
-				HOperatorSet.FindShapeModel(hImage, modelID, job.Match.AngleStart, job.Match.AngleExtent, job.Match.MinScore, 1, 0.0, "least_squares", 0, 0.95, out var row, out var column, out var angle, out var score);
-				if (score.Length > 0)
-				{
-					templateTeachData.RefRow = row[0].D;
-					templateTeachData.RefCol = column[0].D;
-					templateTeachData.RefAngle = angle[0].D;
-				}
-				else
-				{
-					templateTeachData.RefRow = job.TemplateRoi.Center.Y;
-					templateTeachData.RefCol = job.TemplateRoi.Center.X;
-					templateTeachData.RefAngle = job.TemplateRoi.AngleRad;
-				}
+				templateTeachData.RefRow = job.TemplateRoi.Center.Y;
+				templateTeachData.RefCol = job.TemplateRoi.Center.X;
+				templateTeachData.RefAngle = 0.0;
 				templateTeachData.HasTemplate = true;
 				templateTeachData.ModelBytes = ExportShapeModelToBytes(modelID);
+				templateTeachData.EraseStrokes = CloneEraseStrokes(job.TeachData?.EraseStrokes);
 				return templateTeachData;
 			}
 			finally
@@ -160,12 +184,1077 @@ namespace EdgeAlignInspect
 			}
 		}
 
-		/// <summary>
-		/// 在当前图像上执行完整检测流程。
-		/// </summary>
-		/// <param name="curBmp">当前待检测图像。</param>
-		/// <param name="job">检测任务配置，方法内部会先归一化参数。</param>
-		/// <returns>包含模板匹配、基准拟合、检测 ROI 和缺陷统计的检测结果。</returns>
+		public List<PointF> ExtractOuterContourPoints(Bitmap refBmp, EdgeInspectJob job)
+		{
+			if (refBmp == null)
+			{
+				throw new ArgumentNullException("refBmp");
+			}
+			if (job == null)
+			{
+				throw new ArgumentNullException("job");
+			}
+			job = job.DeepClone();
+			job.Normalize();
+			if (job.TemplateRoi.IsEmpty)
+			{
+				throw new InvalidOperationException("未设置模板ROI。");
+			}
+			HImage hImage = null;
+			GCHandle grayHandle = default(GCHandle);
+			HObject rect = null;
+			HObject imageReduced = null;
+			HObject edges = null;
+			HObject selectedEdges = null;
+			try
+			{
+				hImage = BitmapToGrayHImage(refBmp, out var _, out var _, out var _, out grayHandle);
+				GenRectangle2(job.TemplateRoi, out rect);
+				HOperatorSet.ReduceDomain(hImage, rect, out imageReduced);
+				double low = Math.Max(1.0, job.Match.EdgeLowThreshold);
+				double high = Math.Max(low + 1.0, job.Match.EdgeHighThreshold);
+				HOperatorSet.EdgesSubPix(imageReduced, out edges, "canny", Math.Max(0.2, job.Match.EdgeSigma), low, high);
+				HOperatorSet.SelectShapeXld(edges, out selectedEdges, "contlength", "and", Math.Max(6.0, job.Match.FeatureMinDistancePx * 1.5), 999999);
+				return SelectOuterContourPoints(selectedEdges, job.TemplateRoi, job.Match.FeatureMinDistancePx, job.Match.FeatureAngleBins);
+			}
+			finally
+			{
+				selectedEdges?.Dispose();
+				edges?.Dispose();
+				imageReduced?.Dispose();
+				rect?.Dispose();
+				hImage?.Dispose();
+				if (grayHandle.IsAllocated)
+				{
+					grayHandle.Free();
+				}
+			}
+		}
+
+		public TemplateTeachData TeachFromOuterContourPoints(Bitmap refBmp, EdgeInspectJob job, IList<PointF> featurePoints)
+		{
+			if (refBmp == null)
+			{
+				throw new ArgumentNullException("refBmp");
+			}
+			if (job == null)
+			{
+				throw new ArgumentNullException("job");
+			}
+			job = job.DeepClone();
+			job.Normalize();
+			if (job.TemplateRoi.IsEmpty)
+			{
+				throw new InvalidOperationException("未设置模板ROI。");
+			}
+			List<PointF> points = NormalizeTemplateFeaturePoints(featurePoints, job.TemplateRoi, 0.0);
+			if (CountRealPoints(points) < 12)
+			{
+				throw new InvalidOperationException("外轮廓特征点不足，无法创建模板模型。请调整模板ROI、边缘阈值，或减少擦除范围。");
+			}
+			HObject contour = null;
+			HTuple modelID = null;
+			try
+			{
+				GenContourFromPoints(points, out contour);
+				HOperatorSet.CreateShapeModelXld(contour, job.Match.NumLevels, job.Match.AngleStart, job.Match.AngleExtent, "auto", "auto", "ignore_local_polarity", 20, out modelID);
+				SetXldModelOriginToTemplateRoiCenter(modelID, points, job.TemplateRoi);
+				TemplateTeachData teachData = new TemplateTeachData
+				{
+					HasTemplate = true,
+					ModelBytes = ExportShapeModelToBytes(modelID),
+					FeaturePoints = points,
+					EraseStrokes = CloneEraseStrokes(job.TeachData?.EraseStrokes),
+					RefRow = job.TemplateRoi.Center.Y,
+					RefCol = job.TemplateRoi.Center.X,
+					RefAngle = 0.0
+				};
+				return teachData;
+			}
+			finally
+			{
+				if (modelID != null && modelID.Length > 0)
+				{
+					try
+					{
+						HOperatorSet.ClearShapeModel(modelID);
+					}
+					catch
+					{
+					}
+				}
+				contour?.Dispose();
+			}
+		}
+
+		private static List<PointF> SelectOuterContourPoints(HObject edges, RotRectF roi, double minDistance, int maxPointHint)
+		{
+			List<PointF> empty = new List<PointF>();
+			if (edges == null || roi.IsEmpty)
+			{
+				return empty;
+			}
+			PointF axisU = roi.GetAxisU();
+			PointF axisV = roi.GetAxisV();
+			List<ContourCandidate> candidates = new List<ContourCandidate>();
+			HOperatorSet.CountObj(edges, out var countTuple);
+			int count = countTuple.Length > 0 ? countTuple[0].I : 0;
+			for (int i = 1; i <= count; i++)
+			{
+				HObject contour = null;
+				try
+				{
+					HOperatorSet.SelectObj(edges, out contour, i);
+					HOperatorSet.GetContourXld(contour, out var rows, out var cols);
+					ContourCandidate candidate = BuildContourCandidate(rows, cols, roi, axisU, axisV);
+					if (candidate.Points.Count >= 4 && candidate.Length >= Math.Max(8.0, minDistance * 2.0))
+					{
+						candidates.Add(candidate);
+					}
+				}
+				finally
+				{
+					contour?.Dispose();
+				}
+			}
+			if (candidates.Count == 0)
+			{
+				return empty;
+			}
+			int maxTotalPoints = Math.Max(20000, maxPointHint <= 0 ? 20000 : maxPointHint * 20);
+			double modelPointDistance = Math.Max(0.5, minDistance * 0.15);
+			return SelectHalconPreviewStylePoints(candidates, modelPointDistance, maxTotalPoints);
+		}
+
+		private static List<PointF> SelectHalconPreviewStylePoints(List<ContourCandidate> candidates, double minDistance, int maxTotalPoints)
+		{
+			if (candidates == null || candidates.Count == 0)
+			{
+				return new List<PointF>();
+			}
+			List<FeatureSegment> segments = candidates
+				.Where(c => c.Points != null && c.Points.Count >= 2)
+				.OrderByDescending(c => c.Score)
+				.Select(c => new FeatureSegment
+				{
+					Points = c.Points,
+					Length = c.Length
+				})
+				.ToList();
+			return BuildProportionalPointListFromSegments(segments, minDistance, maxTotalPoints);
+		}
+
+		private static List<PointF> SelectFirstEdgeFromRoiSidesSegments(List<ContourCandidate> candidates, RotRectF roi, PointF axisU, PointF axisV, double minDistance, int maxTotalPoints)
+		{
+			List<PointF> empty = new List<PointF>();
+			if (candidates == null || candidates.Count == 0 || roi.IsEmpty)
+			{
+				return empty;
+			}
+			double binSize = Math.Max(2.0, minDistance);
+			int uBins = Math.Max(16, Math.Min(2000, (int)Math.Ceiling(roi.HalfLen1 * 2.0 / binSize) + 1));
+			int vBins = Math.Max(16, Math.Min(2000, (int)Math.Ceiling(roi.HalfLen2 * 2.0 / binSize) + 1));
+			double[] topDist = CreateBestDistanceArray(uBins);
+			double[] bottomDist = CreateBestDistanceArray(uBins);
+			double[] rightDist = CreateBestDistanceArray(vBins);
+			double[] leftDist = CreateBestDistanceArray(vBins);
+			long[] topKey = CreateBestKeyArray(uBins);
+			long[] bottomKey = CreateBestKeyArray(uBins);
+			long[] rightKey = CreateBestKeyArray(vBins);
+			long[] leftKey = CreateBestKeyArray(vBins);
+			List<EdgePointSample> samples = new List<EdgePointSample>();
+
+			for (int ci = 0; ci < candidates.Count; ci++)
+			{
+				ContourCandidate candidate = candidates[ci];
+				for (int pi = 0; pi < candidate.Points.Count; pi++)
+				{
+					PointF pt = candidate.Points[pi];
+					if (!TryProjectInsideRoi(pt.X, pt.Y, roi, axisU, axisV, out var u, out var v))
+					{
+						continue;
+					}
+					EdgePointSample sample = new EdgePointSample
+					{
+						CandidateIndex = ci,
+						PointIndex = pi,
+						Point = pt,
+						U = u,
+						V = v
+					};
+					samples.Add(sample);
+					long key = MakePointKey(ci, pi);
+					int uBin = CoordinateToBin(u, roi.HalfLen1, uBins);
+					int vBin = CoordinateToBin(v, roi.HalfLen2, vBins);
+					UpdateBestSidePoint(roi.HalfLen2 - v, key, uBin, topDist, topKey);
+					UpdateBestSidePoint(roi.HalfLen2 + v, key, uBin, bottomDist, bottomKey);
+					UpdateBestSidePoint(roi.HalfLen1 - u, key, vBin, rightDist, rightKey);
+					UpdateBestSidePoint(roi.HalfLen1 + u, key, vBin, leftDist, leftKey);
+				}
+			}
+
+			if (samples.Count == 0)
+			{
+				return empty;
+			}
+			HashSet<long> selectedKeys = new HashSet<long>();
+			AddBestKeys(topKey, selectedKeys);
+			AddBestKeys(bottomKey, selectedKeys);
+			AddBestKeys(rightKey, selectedKeys);
+			AddBestKeys(leftKey, selectedKeys);
+			if (selectedKeys.Count == 0)
+			{
+				return empty;
+			}
+
+			List<FeatureSegment> segments = new List<FeatureSegment>();
+			for (int ci = 0; ci < candidates.Count; ci++)
+			{
+				ContourCandidate candidate = candidates[ci];
+				List<PointF> run = new List<PointF>();
+				for (int pi = 0; pi < candidate.Points.Count; pi++)
+				{
+					if (selectedKeys.Contains(MakePointKey(ci, pi)))
+					{
+						run.Add(candidate.Points[pi]);
+					}
+					else
+					{
+						AppendFeatureSegment(run, segments, minDistance);
+						run.Clear();
+					}
+				}
+				AppendFeatureSegment(run, segments, minDistance);
+			}
+			if (segments.Count == 0)
+			{
+				return empty;
+			}
+			int maxSegmentCount = Math.Max(8, Math.Min(120, maxTotalPoints / 8));
+			List<FeatureSegment> selected = segments
+				.OrderByDescending(s => s.Score)
+				.Take(maxSegmentCount)
+				.ToList();
+			return BuildPointListFromSegments(selected, minDistance, maxTotalPoints);
+		}
+
+		private static double[] CreateBestDistanceArray(int count)
+		{
+			double[] values = new double[count];
+			for (int i = 0; i < values.Length; i++)
+			{
+				values[i] = double.PositiveInfinity;
+			}
+			return values;
+		}
+
+		private static long[] CreateBestKeyArray(int count)
+		{
+			long[] values = new long[count];
+			for (int i = 0; i < values.Length; i++)
+			{
+				values[i] = -1L;
+			}
+			return values;
+		}
+
+		private static void UpdateBestSidePoint(double distanceFromSide, long key, int bin, double[] bestDistance, long[] bestKey)
+		{
+			if (bestDistance == null || bestKey == null || bin < 0 || bin >= bestDistance.Length)
+			{
+				return;
+			}
+			if (distanceFromSide < 0.0)
+			{
+				return;
+			}
+			if (distanceFromSide < bestDistance[bin])
+			{
+				bestDistance[bin] = distanceFromSide;
+				bestKey[bin] = key;
+			}
+		}
+
+		private static void AddBestKeys(long[] keys, HashSet<long> selectedKeys)
+		{
+			if (keys == null || selectedKeys == null)
+			{
+				return;
+			}
+			for (int i = 0; i < keys.Length; i++)
+			{
+				if (keys[i] >= 0)
+				{
+					selectedKeys.Add(keys[i]);
+				}
+			}
+		}
+
+		private static int CoordinateToBin(double value, double halfLen, int binCount)
+		{
+			if (binCount <= 1)
+			{
+				return 0;
+			}
+			double normalized = (value + halfLen) / Math.Max(1.0, halfLen * 2.0);
+			int bin = (int)Math.Round(normalized * (binCount - 1));
+			if (bin < 0)
+			{
+				return 0;
+			}
+			if (bin >= binCount)
+			{
+				return binCount - 1;
+			}
+			return bin;
+		}
+
+		private static long MakePointKey(int candidateIndex, int pointIndex)
+		{
+			return ((long)candidateIndex << 32) | (uint)pointIndex;
+		}
+
+		private static List<PointF> SelectOuterEnvelopePointSegments(List<ContourCandidate> candidates, RotRectF roi, PointF axisU, PointF axisV, double minDistance, int maxTotalPoints, int angleBinHint)
+		{
+			List<PointF> empty = new List<PointF>();
+			if (candidates == null || candidates.Count == 0)
+			{
+				return empty;
+			}
+			int binCount = Math.Max(120, Math.Min(720, angleBinHint <= 0 ? 360 : angleBinHint));
+			double[] envelope = Enumerable.Repeat(double.NegativeInfinity, binCount).ToArray();
+			foreach (ContourCandidate candidate in candidates)
+			{
+				foreach (PointF pt in candidate.Points)
+				{
+					if (!TryProjectInsideRoi(pt.X, pt.Y, roi, axisU, axisV, out var u, out var v))
+					{
+						continue;
+					}
+					int bin = GetEnvelopeBin(u, v, binCount);
+					double radius = GetNormalizedRadius(u, v, roi);
+					if (radius > envelope[bin])
+					{
+						envelope[bin] = radius;
+					}
+				}
+			}
+
+			double[] smoothEnvelope = new double[binCount];
+			for (int i = 0; i < binCount; i++)
+			{
+				double best = double.NegativeInfinity;
+				for (int offset = -2; offset <= 2; offset++)
+				{
+					int idx = (i + offset + binCount) % binCount;
+					if (envelope[idx] > best)
+					{
+						best = envelope[idx];
+					}
+				}
+				smoothEnvelope[i] = double.IsNegativeInfinity(best) ? 0.0 : best;
+			}
+
+			List<FeatureSegment> segments = new List<FeatureSegment>();
+			double tolerance = 0.055;
+			double minRadius = 0.28;
+			foreach (ContourCandidate candidate in candidates.OrderByDescending(c => c.Score))
+			{
+				List<PointF> run = new List<PointF>();
+				foreach (PointF pt in candidate.Points)
+				{
+					bool keep = false;
+					if (TryProjectInsideRoi(pt.X, pt.Y, roi, axisU, axisV, out var u, out var v))
+					{
+						int bin = GetEnvelopeBin(u, v, binCount);
+						double radius = GetNormalizedRadius(u, v, roi);
+						keep = radius >= minRadius && radius >= smoothEnvelope[bin] - tolerance;
+					}
+					if (keep)
+					{
+						run.Add(pt);
+					}
+					else
+					{
+						AppendFeatureSegment(run, segments, minDistance);
+						run.Clear();
+					}
+				}
+				AppendFeatureSegment(run, segments, minDistance);
+			}
+
+			if (segments.Count == 0)
+			{
+				return empty;
+			}
+			int maxSegmentCount = Math.Max(8, Math.Min(80, maxTotalPoints / 12));
+			List<FeatureSegment> selected = segments
+				.OrderByDescending(s => s.Score)
+				.Take(maxSegmentCount)
+				.ToList();
+			return BuildPointListFromSegments(selected, minDistance, maxTotalPoints);
+		}
+
+		private static List<PointF> SelectLongestContourPoints(List<ContourCandidate> candidates, double minDistance, int maxTotalPoints)
+		{
+			if (candidates == null || candidates.Count == 0)
+			{
+				return new List<PointF>();
+			}
+			List<FeatureSegment> segments = candidates
+				.OrderByDescending(c => c.Score)
+				.Take(Math.Max(4, Math.Min(40, maxTotalPoints / 20)))
+				.Select(c => new FeatureSegment
+				{
+					Points = c.Points,
+					Length = c.Length
+				})
+				.ToList();
+			return BuildPointListFromSegments(segments, minDistance, maxTotalPoints);
+		}
+
+		private static void AppendFeatureSegment(List<PointF> run, List<FeatureSegment> segments, double minDistance)
+		{
+			if (run == null || segments == null || run.Count < 2)
+			{
+				return;
+			}
+			double length = ContourLength(run);
+			if (length < Math.Max(6.0, minDistance * 1.5))
+			{
+				return;
+			}
+			segments.Add(new FeatureSegment
+			{
+				Points = new List<PointF>(run),
+				Length = length
+			});
+		}
+
+		private static List<PointF> BuildPointListFromSegments(IList<FeatureSegment> segments, double minDistance, int maxTotalPoints)
+		{
+			List<PointF> result = new List<PointF>();
+			if (segments == null || segments.Count == 0)
+			{
+				return result;
+			}
+			int maxPerSegment = Math.Max(4, maxTotalPoints / Math.Max(1, segments.Count));
+			foreach (FeatureSegment segment in segments.OrderByDescending(s => s.Score))
+			{
+				List<PointF> sampled = ResampleOrderedContour(segment.Points, minDistance, maxPerSegment);
+				if (sampled.Count < 2)
+				{
+					continue;
+				}
+				if (result.Count > 0)
+				{
+					result.Add(CreateContourSeparator());
+				}
+				result.AddRange(sampled);
+				if (CountRealPoints(result) >= maxTotalPoints)
+				{
+					break;
+				}
+			}
+			return LimitRealPointCount(result, maxTotalPoints);
+		}
+
+		private static List<PointF> BuildProportionalPointListFromSegments(IList<FeatureSegment> segments, double minDistance, int maxTotalPoints)
+		{
+			List<PointF> result = new List<PointF>();
+			if (segments == null || segments.Count == 0)
+			{
+				return result;
+			}
+			List<FeatureSegment> ordered = segments
+				.Where(s => s != null && s.Points != null && s.Points.Count >= 2)
+				.OrderByDescending(s => s.Score)
+				.Take(Math.Max(16, Math.Min(2000, maxTotalPoints / 4)))
+				.ToList();
+			if (ordered.Count == 0)
+			{
+				return result;
+			}
+			double totalLength = ordered.Sum(s => Math.Max(1.0, s.Length));
+			foreach (FeatureSegment segment in ordered)
+			{
+				int maxForSegment = Math.Max(4, (int)Math.Round(maxTotalPoints * Math.Max(1.0, segment.Length) / totalLength));
+				List<PointF> sampled = ResampleOrderedContour(segment.Points, minDistance, maxForSegment);
+				if (sampled.Count < 2)
+				{
+					continue;
+				}
+				if (result.Count > 0)
+				{
+					result.Add(CreateContourSeparator());
+				}
+				result.AddRange(sampled);
+				if (CountRealPoints(result) >= maxTotalPoints)
+				{
+					break;
+				}
+			}
+			return LimitRealPointCount(result, maxTotalPoints);
+		}
+
+		private static List<PointF> LimitRealPointCount(List<PointF> points, int maxRealPoints)
+		{
+			if (points == null || CountRealPoints(points) <= maxRealPoints)
+			{
+				return points ?? new List<PointF>();
+			}
+			List<List<PointF>> segments = new List<List<PointF>>();
+			List<PointF> current = new List<PointF>();
+			foreach (PointF pt in points)
+			{
+				if (IsContourSeparator(pt))
+				{
+					if (current.Count > 0)
+					{
+						segments.Add(current);
+						current = new List<PointF>();
+					}
+					continue;
+				}
+				current.Add(pt);
+			}
+			if (current.Count > 0)
+			{
+				segments.Add(current);
+			}
+			int total = segments.Sum(s => s.Count);
+			if (total <= maxRealPoints)
+			{
+				return points;
+			}
+			List<PointF> result = new List<PointF>();
+			foreach (List<PointF> segment in segments)
+			{
+				int keep = Math.Max(2, (int)Math.Round((double)segment.Count * maxRealPoints / total));
+				List<PointF> sampled = ResampleOrderedContour(segment, 1.0, keep);
+				if (sampled.Count < 2)
+				{
+					continue;
+				}
+				if (result.Count > 0)
+				{
+					result.Add(CreateContourSeparator());
+				}
+				result.AddRange(sampled);
+			}
+			return result;
+		}
+
+		private static double ContourLength(IList<PointF> points)
+		{
+			if (points == null || points.Count < 2)
+			{
+				return 0.0;
+			}
+			double length = 0.0;
+			for (int i = 1; i < points.Count; i++)
+			{
+				length += Math.Sqrt(DistanceSquared(points[i - 1], points[i]));
+			}
+			return length;
+		}
+
+		private static ContourCandidate BuildContourCandidate(HTuple rows, HTuple cols, RotRectF roi, PointF axisU, PointF axisV)
+		{
+			ContourCandidate candidate = new ContourCandidate();
+			int len = Math.Min(rows.Length, cols.Length);
+			double minU = double.PositiveInfinity;
+			double maxU = double.NegativeInfinity;
+			double minV = double.PositiveInfinity;
+			double maxV = double.NegativeInfinity;
+			PointF? last = null;
+			for (int p = 0; p < len; p++)
+			{
+				double x = cols[p].D;
+				double y = rows[p].D;
+				if (!TryProjectInsideRoi(x, y, roi, axisU, axisV, out var u, out var v))
+				{
+					continue;
+				}
+				PointF pt = new PointF((float)x, (float)y);
+				candidate.Points.Add(pt);
+				minU = Math.Min(minU, u);
+				maxU = Math.Max(maxU, u);
+				minV = Math.Min(minV, v);
+				maxV = Math.Max(maxV, v);
+				if (last.HasValue)
+				{
+					candidate.Length += Math.Sqrt(DistanceSquared(last.Value, pt));
+				}
+				last = pt;
+			}
+			if (candidate.Points.Count > 0 && !double.IsInfinity(minU) && !double.IsInfinity(minV))
+			{
+				candidate.Coverage = Math.Max(0.0, maxU - minU) * Math.Max(0.0, maxV - minV);
+			}
+			return candidate;
+		}
+
+		private static IEnumerable<ContourCandidate> SelectEnvelopeContourSegments(List<ContourCandidate> candidates, RotRectF roi, PointF axisU, PointF axisV)
+		{
+			const int binCount = 180;
+			double[] envelope = Enumerable.Repeat(double.NegativeInfinity, binCount).ToArray();
+			foreach (ContourCandidate candidate in candidates)
+			{
+				foreach (PointF pt in candidate.Points)
+				{
+					if (!TryProjectInsideRoi(pt.X, pt.Y, roi, axisU, axisV, out var u, out var v))
+					{
+						continue;
+					}
+					int bin = GetEnvelopeBin(u, v, binCount);
+					double radius = GetNormalizedRadius(u, v, roi);
+					if (radius > envelope[bin])
+					{
+						envelope[bin] = radius;
+					}
+				}
+			}
+
+			for (int i = 0; i < envelope.Length; i++)
+			{
+				if (double.IsNegativeInfinity(envelope[i]))
+				{
+					envelope[i] = 0.0;
+				}
+			}
+
+			List<Tuple<ContourCandidate, double>> scored = new List<Tuple<ContourCandidate, double>>();
+			foreach (ContourCandidate candidate in candidates)
+			{
+				int outer = 0;
+				int total = 0;
+				foreach (PointF pt in candidate.Points)
+				{
+					if (!TryProjectInsideRoi(pt.X, pt.Y, roi, axisU, axisV, out var u, out var v))
+					{
+						continue;
+					}
+					int bin = GetEnvelopeBin(u, v, binCount);
+					double radius = GetNormalizedRadius(u, v, roi);
+					total++;
+					if (radius >= envelope[bin] - 0.06)
+					{
+						outer++;
+					}
+				}
+				if (total == 0)
+				{
+					continue;
+				}
+				double ratio = (double)outer / (double)total;
+				if (ratio >= 0.35)
+				{
+					scored.Add(Tuple.Create(candidate, candidate.Score * (0.6 + ratio)));
+				}
+			}
+			return scored.OrderByDescending(x => x.Item2).Select(x => x.Item1);
+		}
+
+		private static int GetEnvelopeBin(double u, double v, int binCount)
+		{
+			double angle = Math.Atan2(v, u);
+			int bin = (int)Math.Floor((angle + Math.PI) / (Math.PI * 2.0) * binCount);
+			if (bin < 0)
+			{
+				return 0;
+			}
+			if (bin >= binCount)
+			{
+				return binCount - 1;
+			}
+			return bin;
+		}
+
+		private static double GetNormalizedRadius(double u, double v, RotRectF roi)
+		{
+			double ru = u / Math.Max(1.0, roi.HalfLen1);
+			double rv = v / Math.Max(1.0, roi.HalfLen2);
+			return Math.Sqrt(ru * ru + rv * rv);
+		}
+
+		private static List<PointF> ResampleOrderedContour(IList<PointF> points, double minDistance, int maxPoints)
+		{
+			List<PointF> result = new List<PointF>();
+			if (points == null || points.Count == 0)
+			{
+				return result;
+			}
+			double minDist2 = minDistance * minDistance;
+			result.Add(points[0]);
+			for (int i = 1; i < points.Count; i++)
+			{
+				PointF pt = points[i];
+				if (DistanceSquared(pt, result[result.Count - 1]) >= minDist2)
+				{
+					result.Add(pt);
+				}
+			}
+			if (result.Count > maxPoints)
+			{
+				List<PointF> limited = new List<PointF>();
+				double step = (double)(result.Count - 1) / (double)(maxPoints - 1);
+				for (int i = 0; i < maxPoints; i++)
+				{
+					int idx = Math.Min(result.Count - 1, (int)Math.Round(i * step));
+					limited.Add(result[idx]);
+				}
+				result = limited;
+			}
+			return result;
+		}
+
+		private static List<PointF> SelectSparseOuterPoints(HObject edges, RotRectF roi, int bins, double minDistance)
+		{
+			List<PointF> candidates = new List<PointF>();
+			if (edges == null || roi.IsEmpty)
+			{
+				return candidates;
+			}
+			int binCount = Math.Max(24, Math.Min(1440, bins <= 0 ? 360 : bins));
+			double minDist = Math.Max(0.0, minDistance);
+			PointF axisU = roi.GetAxisU();
+			PointF axisV = roi.GetAxisV();
+			PointF[] bestPoints = new PointF[binCount];
+			double[] bestRadius = Enumerable.Repeat(double.NegativeInfinity, binCount).ToArray();
+			bool[] hasPoint = new bool[binCount];
+			HOperatorSet.CountObj(edges, out var countTuple);
+			int count = countTuple.Length > 0 ? countTuple[0].I : 0;
+			for (int i = 1; i <= count; i++)
+			{
+				HObject contour = null;
+				try
+				{
+					HOperatorSet.SelectObj(edges, out contour, i);
+					HOperatorSet.GetContourXld(contour, out var rows, out var cols);
+					int len = Math.Min(rows.Length, cols.Length);
+					for (int p = 0; p < len; p++)
+					{
+						double x = cols[p].D;
+						double y = rows[p].D;
+						if (!TryProjectInsideRoi(x, y, roi, axisU, axisV, out var u, out var v))
+						{
+							continue;
+						}
+						double angle = Math.Atan2(v, u);
+						int bin = (int)Math.Floor((angle + Math.PI) / (Math.PI * 2.0) * binCount);
+						if (bin < 0)
+						{
+							bin = 0;
+						}
+						else if (bin >= binCount)
+						{
+							bin = binCount - 1;
+						}
+						double ru = Math.Abs(u) / Math.Max(1.0, roi.HalfLen1);
+						double rv = Math.Abs(v) / Math.Max(1.0, roi.HalfLen2);
+						double radius = Math.Sqrt(ru * ru + rv * rv);
+						if (radius > bestRadius[bin])
+						{
+							bestRadius[bin] = radius;
+							bestPoints[bin] = new PointF((float)x, (float)y);
+							hasPoint[bin] = true;
+						}
+					}
+				}
+				finally
+				{
+					contour?.Dispose();
+				}
+			}
+			List<Tuple<PointF, double>> ordered = new List<Tuple<PointF, double>>();
+			for (int i = 0; i < binCount; i++)
+			{
+				if (!hasPoint[i] || bestRadius[i] < 0.15)
+				{
+					continue;
+				}
+				PointF pt = bestPoints[i];
+				double a = Math.Atan2(pt.Y - roi.Center.Y, pt.X - roi.Center.X);
+				ordered.Add(Tuple.Create(pt, a));
+			}
+			foreach (Tuple<PointF, double> item in ordered.OrderBy(x => x.Item2))
+			{
+				PointF pt = item.Item1;
+				bool tooClose = false;
+				for (int i = 0; i < candidates.Count; i++)
+				{
+					if (DistanceSquared(pt, candidates[i]) < minDist * minDist)
+					{
+						tooClose = true;
+						break;
+					}
+				}
+				if (!tooClose)
+				{
+					candidates.Add(pt);
+				}
+			}
+			return candidates;
+		}
+
+		private static List<PointF> NormalizeTemplateFeaturePoints(IList<PointF> featurePoints, RotRectF roi, double minDistance)
+		{
+			List<PointF> result = new List<PointF>();
+			if (featurePoints == null || roi.IsEmpty)
+			{
+				return result;
+			}
+			double minDist = Math.Max(0.0, minDistance);
+			PointF axisU = roi.GetAxisU();
+			PointF axisV = roi.GetAxisV();
+			PointF? lastInSegment = null;
+			foreach (PointF pt in featurePoints)
+			{
+				if (IsContourSeparator(pt))
+				{
+					if (result.Count > 0 && !IsContourSeparator(result[result.Count - 1]))
+					{
+						result.Add(CreateContourSeparator());
+					}
+					lastInSegment = null;
+					continue;
+				}
+				if (!TryProjectInsideRoi(pt.X, pt.Y, roi, axisU, axisV, out var _, out var _))
+				{
+					continue;
+				}
+				if (minDist <= 0.0 || !lastInSegment.HasValue || DistanceSquared(pt, lastInSegment.Value) >= minDist * minDist)
+				{
+					result.Add(pt);
+					lastInSegment = pt;
+				}
+			}
+			while (result.Count > 0 && IsContourSeparator(result[result.Count - 1]))
+			{
+				result.RemoveAt(result.Count - 1);
+			}
+			return result;
+		}
+
+		private static void GenContourFromPoints(List<PointF> points, out HObject contour)
+		{
+			if (points == null || points.Count == 0)
+			{
+				throw new ArgumentException("Feature point list is empty.", "points");
+			}
+			contour = null;
+			List<PointF> segment = new List<PointF>();
+			for (int i = 0; i <= points.Count; i++)
+			{
+				bool flush = i == points.Count || IsContourSeparator(points[i]);
+				if (!flush)
+				{
+					segment.Add(points[i]);
+					continue;
+				}
+				AppendContourSegment(segment, ref contour);
+				segment.Clear();
+			}
+			if (contour == null)
+			{
+				throw new ArgumentException("Feature point list does not contain a valid contour.", "points");
+			}
+		}
+
+		private static void AppendContourSegment(List<PointF> segment, ref HObject contour)
+		{
+			if (segment == null || segment.Count < 2)
+			{
+				return;
+			}
+			HTuple rows = new HTuple();
+			HTuple cols = new HTuple();
+			for (int i = 0; i < segment.Count; i++)
+			{
+				rows = rows.TupleConcat(segment[i].Y);
+				cols = cols.TupleConcat(segment[i].X);
+			}
+			HObject one = null;
+			HObject concat = null;
+			try
+			{
+				HOperatorSet.GenContourPolygonXld(out one, rows, cols);
+				if (contour == null)
+				{
+					contour = one;
+					one = null;
+					return;
+				}
+				HOperatorSet.ConcatObj(contour, one, out concat);
+				contour.Dispose();
+				contour = concat;
+				concat = null;
+			}
+			finally
+			{
+				one?.Dispose();
+				concat?.Dispose();
+			}
+		}
+
+		private static bool TryProjectInsideRoi(double x, double y, RotRectF roi, PointF axisU, PointF axisV, out double u, out double v)
+		{
+			double dx = x - roi.Center.X;
+			double dy = y - roi.Center.Y;
+			u = dx * axisU.X + dy * axisU.Y;
+			v = dx * axisV.X + dy * axisV.Y;
+			return Math.Abs(u) <= roi.HalfLen1 && Math.Abs(v) <= roi.HalfLen2;
+		}
+
+		private static PointF CreateContourSeparator()
+		{
+			return new PointF(float.NaN, float.NaN);
+		}
+
+		private static bool IsContourSeparator(PointF p)
+		{
+			return float.IsNaN(p.X) || float.IsNaN(p.Y);
+		}
+
+		private static int CountRealPoints(IEnumerable<PointF> points)
+		{
+			return points == null ? 0 : points.Count(p => !IsContourSeparator(p));
+		}
+
+		private static double DistanceSquared(PointF a, PointF b)
+		{
+			double dx = a.X - b.X;
+			double dy = a.Y - b.Y;
+			return dx * dx + dy * dy;
+		}
+
+		private static List<PointF> TransformPoints(IList<PointF> points, HTuple hom)
+		{
+			List<PointF> result = new List<PointF>();
+			if (points == null || hom == null)
+			{
+				return result;
+			}
+			for (int i = 0; i < points.Count; i++)
+			{
+				PointF pt = points[i];
+				if (IsContourSeparator(pt))
+				{
+					result.Add(CreateContourSeparator());
+					continue;
+				}
+				HOperatorSet.AffineTransPoint2d(hom, pt.Y, pt.X, out var row, out var col);
+				result.Add(new PointF((float)col.D, (float)row.D));
+			}
+			return result;
+		}
+
+		private static List<TemplateEraseStroke> CloneEraseStrokes(IEnumerable<TemplateEraseStroke> strokes)
+		{
+			return strokes == null
+				? new List<TemplateEraseStroke>()
+				: strokes.Select(x => x?.DeepClone() ?? new TemplateEraseStroke()).ToList();
+		}
+
+		private static void SetXldModelOriginToTemplateRoiCenter(HTuple modelID, IList<PointF> featurePoints, RotRectF templateRoi)
+		{
+			if (modelID == null || modelID.Length <= 0 || featurePoints == null || templateRoi.IsEmpty)
+			{
+				return;
+			}
+			bool hasPoint = false;
+			double minRow = double.MaxValue;
+			double maxRow = double.MinValue;
+			double minCol = double.MaxValue;
+			double maxCol = double.MinValue;
+			foreach (PointF pt in featurePoints)
+			{
+				if (IsContourSeparator(pt))
+				{
+					continue;
+				}
+				hasPoint = true;
+				minRow = Math.Min(minRow, pt.Y);
+				maxRow = Math.Max(maxRow, pt.Y);
+				minCol = Math.Min(minCol, pt.X);
+				maxCol = Math.Max(maxCol, pt.X);
+			}
+			if (!hasPoint)
+			{
+				return;
+			}
+			double defaultOriginRow = (minRow + maxRow) * 0.5;
+			double defaultOriginCol = (minCol + maxCol) * 0.5;
+			HOperatorSet.SetShapeModelOrigin(modelID, templateRoi.Center.Y - defaultOriginRow, templateRoi.Center.X - defaultOriginCol);
+		}
+
+		public TemplateMatchQuickTestResult TestTemplateMatch(Bitmap curBmp, EdgeInspectJob job)
+		{
+			if (curBmp == null)
+			{
+				throw new ArgumentNullException("curBmp");
+			}
+			if (job == null)
+			{
+				throw new ArgumentNullException("job");
+			}
+			job = job.DeepClone();
+			job.Normalize();
+			if (job.TeachData == null || !job.TeachData.HasTemplate || job.TeachData.ModelBytes == null || job.TeachData.ModelBytes.Length == 0)
+			{
+				throw new InvalidOperationException("请先创建模板模型。");
+			}
+			HImage hImage = null;
+			GCHandle grayHandle = default(GCHandle);
+			HTuple modelID = null;
+			try
+			{
+				hImage = BitmapToGrayHImage(curBmp, out var _, out var _, out var _, out grayHandle);
+				modelID = ImportShapeModelFromBytes(job.TeachData.ModelBytes);
+				SetXldModelOriginToTemplateRoiCenter(modelID, job.TeachData.FeaturePoints, job.TemplateRoi);
+				HOperatorSet.FindShapeModel(hImage, modelID, job.Match.AngleStart, job.Match.AngleExtent, job.Match.MinScore, 1, 0.3, "least_squares", 0, 0.75, out var row, out var column, out var angle, out var score);
+				if (score.Length < 1)
+				{
+					return new TemplateMatchQuickTestResult
+					{
+						Found = false,
+						Message = "未找到匹配目标。"
+					};
+				}
+				HOperatorSet.VectorAngleToRigid(job.TeachData.RefRow, job.TeachData.RefCol, 0.0, row[0], column[0], angle[0], out var homMat2D);
+				return new TemplateMatchQuickTestResult
+				{
+					Found = true,
+					Score = score[0].D,
+					Row = row[0].D,
+					Col = column[0].D,
+					Angle = angle[0].D,
+					TemplateRoiCur = TransformRotRect(job.TemplateRoi, homMat2D),
+					MatchContourPoints = TransformPoints(job.TeachData.FeaturePoints, homMat2D),
+					Message = $"匹配成功，分数={score[0].D:F3}"
+				};
+			}
+			finally
+			{
+				if (modelID != null && modelID.Length > 0)
+				{
+					try
+					{
+						HOperatorSet.ClearShapeModel(modelID);
+					}
+					catch
+					{
+					}
+				}
+				hImage?.Dispose();
+				if (grayHandle.IsAllocated)
+				{
+					grayHandle.Free();
+				}
+			}
+		}
+
 		public EdgeInspectResult Inspect(Bitmap curBmp, EdgeInspectJob job)
 		{
 			if (curBmp == null)
@@ -217,7 +1306,8 @@ namespace EdgeAlignInspect
 				if (job.Match.Enabled)
 				{
 					hTuple = ImportShapeModelFromBytes(job.TeachData.ModelBytes);
-					HOperatorSet.FindShapeModel(hImage, hTuple, job.Match.AngleStart, job.Match.AngleExtent, job.Match.MinScore, 1, 0.0, "least_squares", 0, 0.95, out var row, out var column, out var angle, out var score);
+					SetXldModelOriginToTemplateRoiCenter(hTuple, job.TeachData.FeaturePoints, job.TemplateRoi);
+					HOperatorSet.FindShapeModel(hImage, hTuple, job.Match.AngleStart, job.Match.AngleExtent, job.Match.MinScore, 1, 0.3, "least_squares", 0, 0.75, out var row, out var column, out var angle, out var score);
 					if (score.Length < 1)
 					{
 						edgeInspectResult.TemplateMatchOk = false;
@@ -229,9 +1319,14 @@ namespace EdgeAlignInspect
 					}
 					edgeInspectResult.TemplateMatchOk = true;
 					edgeInspectResult.TemplateMatchScore = score[0].D;
-					HOperatorSet.VectorAngleToRigid(job.TeachData.RefRow, job.TeachData.RefCol, job.TeachData.RefAngle, row[0], column[0], angle[0], out homMat2D);
+					edgeInspectResult.TemplateMatchRow = row[0].D;
+					edgeInspectResult.TemplateMatchCol = column[0].D;
+					edgeInspectResult.TemplateMatchAngle = angle[0].D;
+					edgeInspectResult.TemplateMatchCenter = new PointF((float)column[0].D, (float)row[0].D);
+					HOperatorSet.VectorAngleToRigid(job.TeachData.RefRow, job.TeachData.RefCol, 0.0, row[0], column[0], angle[0], out homMat2D);
 					flag2 = true;
 					edgeInspectResult.TemplateRoiCur = TransformRotRect(job.TemplateRoi, homMat2D);
+					edgeInspectResult.TemplateMatchContourPoints.AddRange(TransformPoints(job.TeachData.FeaturePoints, homMat2D));
 				}
 				Dictionary<int, EdgeLineFit> dictionary = new Dictionary<int, EdgeLineFit>();
 				Dictionary<int, EdgeLineFit> dictionary2 = new Dictionary<int, EdgeLineFit>();
@@ -312,20 +1407,20 @@ namespace EdgeAlignInspect
 					}
 					edgeInspectResult.CircleBaseResults.Add(circleBaseRoiInspectResult);
 				}
-				for (int p = 0; p < job.CirclePointRois.Count; p++)
+				for (int k = 0; k < job.CirclePointRois.Count; k++)
 				{
-					CirclePointRoiItem circlePointRoiItem = job.CirclePointRois[p] ?? new CirclePointRoiItem
+					CirclePointRoiItem circlePointRoiItem = job.CirclePointRois[k] ?? new CirclePointRoiItem
 					{
-						Name = $"圆点基准{p + 1}"
+						Name = $"圆点基准{k + 1}"
 					};
 					CircleRoiF circleRoiF3 = (flag2 ? TransformCircleRoi(circlePointRoiItem.Circle, homMat2D) : circlePointRoiItem.Circle);
-					CaliperParameters caliperParameters4 = (circlePointRoiItem.Caliper ?? job.CircleCaliper ?? EdgeInspectJob.CreateDefaultCircleCaliper()).DeepClone();
+					CaliperParameters caliperParameters3 = (circlePointRoiItem.Caliper ?? job.CircleCaliper ?? EdgeInspectJob.CreateDefaultCircleCaliper()).DeepClone();
 					CirclePointRoiInspectResult circlePointRoiInspectResult = new CirclePointRoiInspectResult
 					{
-						Index = p,
-						Name = (string.IsNullOrWhiteSpace(circlePointRoiItem.Name) ? $"圆点基准{p + 1}" : circlePointRoiItem.Name),
+						Index = k,
+						Name = (string.IsNullOrWhiteSpace(circlePointRoiItem.Name) ? $"圆点基准{k + 1}" : circlePointRoiItem.Name),
 						CircleRoiCur = circleRoiF3,
-						CaliperUsed = caliperParameters4.DeepClone()
+						CaliperUsed = caliperParameters3.DeepClone()
 					};
 					if (circleRoiF3.IsEmpty)
 					{
@@ -334,12 +1429,12 @@ namespace EdgeAlignInspect
 					}
 					else
 					{
-						circlePointRoiInspectResult.Circle = FitCircleInRoi(hImage, w, h, circleRoiF3, caliperParameters4);
+						circlePointRoiInspectResult.Circle = FitCircleInRoi(hImage, w, h, circleRoiF3, caliperParameters3);
 						circlePointRoiInspectResult.Success = circlePointRoiInspectResult.Circle != null && circlePointRoiInspectResult.Circle.Success;
 						circlePointRoiInspectResult.Message = (circlePointRoiInspectResult.Success ? "OK" : AppendFailureDetail("圆点基准拟合失败", circlePointRoiInspectResult.Circle));
 						if (circlePointRoiInspectResult.Success)
 						{
-							dictionary3[p] = circlePointRoiInspectResult.Circle;
+							dictionary3[k] = circlePointRoiInspectResult.Circle;
 						}
 					}
 					edgeInspectResult.CirclePointResults.Add(circlePointRoiInspectResult);
@@ -352,11 +1447,11 @@ namespace EdgeAlignInspect
 				int num = 0;
 				List<double> list = new List<double>();
 				List<double> list2 = new List<double>();
-				for (int k = 0; k < job.DetectItems.Count; k++)
+				for (int l = 0; l < job.DetectItems.Count; l++)
 				{
-					DetectRoiItem detectRoiItem = job.DetectItems[k] ?? new DetectRoiItem
+					DetectRoiItem detectRoiItem = job.DetectItems[l] ?? new DetectRoiItem
 					{
-						Name = $"检测{k + 1}"
+						Name = $"检测{l + 1}"
 					};
 					if (!detectRoiItem.Enabled)
 					{
@@ -364,14 +1459,14 @@ namespace EdgeAlignInspect
 					}
 					num++;
 					RotRectF rotRectF2 = (flag2 ? TransformRotRect(detectRoiItem.Roi, homMat2D) : detectRoiItem.Roi);
-					CaliperParameters caliperParameters3 = (detectRoiItem.Caliper ?? job.ResolveDetectCaliper(k) ?? EdgeInspectJob.CreateDefaultDetectCaliper()).DeepClone();
+					CaliperParameters caliperParameters4 = (detectRoiItem.Caliper ?? job.ResolveDetectCaliper(l) ?? EdgeInspectJob.CreateDefaultDetectCaliper()).DeepClone();
 					int num2 = job.ResolveBaseRoiIndex(detectRoiItem.BaseRoiId, detectRoiItem.BaseRoiIndex);
 					int num3 = job.ResolveCircleBaseRoiIndex(detectRoiItem.CircleBaseRoiId, detectRoiItem.CircleBaseRoiIndex);
 					int num4 = job.ResolveCirclePointRoiIndex(detectRoiItem.CirclePointRoiId, detectRoiItem.CirclePointRoiIndex);
 					DetectRoiInspectResult detectRoiInspectResult = new DetectRoiInspectResult
 					{
-						Index = k,
-						Name = (string.IsNullOrWhiteSpace(detectRoiItem.Name) ? $"检测{k + 1}" : detectRoiItem.Name),
+						Index = l,
+						Name = (string.IsNullOrWhiteSpace(detectRoiItem.Name) ? $"检测{l + 1}" : detectRoiItem.Name),
 						Enabled = true,
 						RoiCur = rotRectF2,
 						UseReferenceLine = detectRoiItem.UseReferenceLine,
@@ -385,7 +1480,7 @@ namespace EdgeAlignInspect
 						BurrTolerancePx = detectRoiItem.BurrTolerancePx,
 						DentTolerancePx = detectRoiItem.DentTolerancePx,
 						DetectMode = job.DetectMode,
-						CaliperUsed = caliperParameters3.DeepClone(),
+						CaliperUsed = caliperParameters4.DeepClone(),
 						UseExternalBurrTolerance = flag,
 						ExternalBurrTolerance = job.ExternalBurrTolerance,
 						ExternalDentTolerance = job.ExternalDentTolerance,
@@ -399,50 +1494,49 @@ namespace EdgeAlignInspect
 						AddDetectFailure(edgeInspectResult, detectRoiInspectResult, "检测ROI为空");
 						continue;
 					}
-					detectRoiInspectResult.FittedLine = FitLineInRotRoi(hImage, w, h, rotRectF2, caliperParameters3);
+					detectRoiInspectResult.FittedLine = FitLineInRotRoi(hImage, w, h, rotRectF2, caliperParameters4);
 					if (detectRoiInspectResult.FittedLine == null || !detectRoiInspectResult.FittedLine.Success || detectRoiInspectResult.FittedLine.MeasurePoints.Count == 0)
 					{
 						AddDetectFailure(edgeInspectResult, detectRoiInspectResult, AppendFailureDetail("检测ROI拟合失败（检查：ROI/卡尺参数/极性）", detectRoiInspectResult.FittedLine));
 						continue;
 					}
 					detectRoiInspectResult.FittedAngleRad = detectRoiInspectResult.FittedLine.AngleRad;
-					EdgeLineFit overallReferenceLine = null;
-					PointF? overallMeasurePoint = null;
+					EdgeLineFit edgeLineFit = null;
+					PointF? pointF = null;
 					if (detectRoiItem.ReferenceBaseKind == ReferenceBaseKind.CirclePoint)
 					{
 						detectRoiInspectResult.UseReferenceLine = false;
-						EdgeCircleFit value3;
-						if (!dictionary3.TryGetValue(num4, out value3) || value3 == null || !value3.Success)
+						if (!dictionary3.TryGetValue(num4, out var value) || value == null || !value.Success)
 						{
 							AddDetectFailure(edgeInspectResult, detectRoiInspectResult, $"关联圆点基准无效（圆点基准索引={num4 + 1}）");
 							continue;
 						}
 						detectRoiInspectResult.CirclePointRoiIndex = num4;
-						detectRoiInspectResult.ReferencePointCur = value3.Center;
+						detectRoiInspectResult.ReferencePointCur = value.Center;
 						detectRoiInspectResult.JudgeLine = CopyLine(detectRoiInspectResult.FittedLine);
-						overallReferenceLine = detectRoiInspectResult.FittedLine;
-						overallMeasurePoint = value3.Center;
+						edgeLineFit = detectRoiInspectResult.FittedLine;
+						pointF = value.Center;
 					}
 					else if (detectRoiItem.UseReferenceLine)
 					{
-						EdgeLineFit value = null;
+						EdgeLineFit value2 = null;
 						if (detectRoiItem.ReferenceBaseKind == ReferenceBaseKind.CirclePair)
 						{
-							dictionary2.TryGetValue(num3, out value);
+							dictionary2.TryGetValue(num3, out value2);
 							detectRoiInspectResult.CircleBaseRoiIndex = num3;
 						}
 						else
 						{
-							dictionary.TryGetValue(num2, out value);
+							dictionary.TryGetValue(num2, out value2);
 						}
-						if (value == null || !value.Success)
+						if (value2 == null || !value2.Success)
 						{
 							string text = ((detectRoiItem.ReferenceBaseKind == ReferenceBaseKind.CirclePair) ? $"圆基准索引={detectRoiInspectResult.CircleBaseRoiIndex + 1}" : $"基准索引={num2 + 1}");
 							AddDetectFailure(edgeInspectResult, detectRoiInspectResult, "关联基准线无效（" + text + "）");
 							continue;
 						}
-						overallReferenceLine = value;
-						detectRoiInspectResult.JudgeLine = CopyLine(detectRoiInspectResult.FittedLine);
+						edgeLineFit = value2;
+						detectRoiInspectResult.JudgeLine = CopyLine(value2);
 					}
 					else
 					{
@@ -450,15 +1544,15 @@ namespace EdgeAlignInspect
 					}
 					ComputeAngleReference(detectRoiInspectResult, dictionary, dictionary2);
 					EvaluateDetectItem(detectRoiInspectResult, rotRectF2, job.DetectMode, useReferenceLine: false);
-					if (overallReferenceLine != null && overallReferenceLine.Success)
+					if (edgeLineFit != null && edgeLineFit.Success)
 					{
-						if (overallMeasurePoint.HasValue)
+						if (pointF.HasValue)
 						{
-							EvaluateOverallDistance(detectRoiInspectResult, overallReferenceLine, overallMeasurePoint.Value);
+							EvaluateOverallDistance(detectRoiInspectResult, edgeLineFit, pointF.Value);
 						}
 						else
 						{
-							EvaluateOverallDistanceFromMeasurePoints(detectRoiInspectResult, overallReferenceLine);
+							EvaluateOverallDistanceFromMeasurePoints(detectRoiInspectResult, edgeLineFit);
 						}
 					}
 					if (!detectRoiInspectResult.Success)
@@ -509,11 +1603,11 @@ namespace EdgeAlignInspect
 				{
 					edgeInspectResult.NgReasons = NgReason.DetectRoiFailed;
 				}
-				string text2 = GetDetectModeText(job.DetectMode);
+				string detectModeText = GetDetectModeText(job.DetectMode);
 				string judgeModeText = GetJudgeModeText(edgeInspectResult.HasReferenceLineItems, edgeInspectResult.HasSelfFitLineItems);
-				string text3 = (flag ? $" | 外部允差(mm)：毛刺={job.ExternalBurrTolerance:F4} 凹陷={job.ExternalDentTolerance:F4} 超边={job.ExternalOverEdgeTolerance:F4} 漏铜={job.ExternalCopperLeakTolerance:F4} | 解析度X={job.PixelResolutionX:F6}mm/px | 解析度Y={job.PixelResolutionY:F6}mm/px | 最大偏差={edgeInspectResult.MaxPositiveDeltaValue:F4}mm" : $" | 本地毛刺允差={edgeInspectResult.BurrTolerance:F2}px | 本地凹陷允差={edgeInspectResult.DentTolerance:F2}px | 最大偏差={edgeInspectResult.MaxPositiveDeltaPx:F2}px");
-				string text4 = ((edgeInspectResult.FailedItems.Count > 0) ? (" | " + string.Join("；", edgeInspectResult.FailedItems.Take(6))) : "");
-				edgeInspectResult.Message = (edgeInspectResult.Success ? $"OK | 模式={text2} | 判定={judgeModeText} | 检测ROI={num}{text3} | 局部Δ(min/max/mean)={edgeInspectResult.DeltaMin:F2}/{edgeInspectResult.DeltaMax:F2}/{edgeInspectResult.DeltaMean:F2}px" : $"NG | 原因={edgeInspectResult.NgReasonText} | 模式={text2} | 判定={judgeModeText} | 检测ROI={num} | 失败项={edgeInspectResult.DetectResults.Count((DetectRoiInspectResult x) => !x.Success)} | 毛刺={edgeInspectResult.BurrCount} 凹陷={edgeInspectResult.DentCount} 超边={edgeInspectResult.OverEdgeCount} 漏铜={edgeInspectResult.CopperLeakCount}{text3} | 局部Δ(min/max/mean)={edgeInspectResult.DeltaMin:F2}/{edgeInspectResult.DeltaMax:F2}/{edgeInspectResult.DeltaMean:F2}px{text4}");
+				string text2 = (flag ? $" | 外部允差(mm)：毛刺={job.ExternalBurrTolerance:F4} 凹陷={job.ExternalDentTolerance:F4} 超边={job.ExternalOverEdgeTolerance:F4} 漏铜={job.ExternalCopperLeakTolerance:F4} | 解析度X={job.PixelResolutionX:F6}mm/px | 解析度Y={job.PixelResolutionY:F6}mm/px | 最大偏差={edgeInspectResult.MaxPositiveDeltaValue:F4}mm" : $" | 本地毛刺允差={edgeInspectResult.BurrTolerance:F2}px | 本地凹陷允差={edgeInspectResult.DentTolerance:F2}px | 最大偏差={edgeInspectResult.MaxPositiveDeltaPx:F2}px");
+				string text3 = ((edgeInspectResult.FailedItems.Count > 0) ? (" | " + string.Join("；", edgeInspectResult.FailedItems.Take(6))) : "");
+				edgeInspectResult.Message = (edgeInspectResult.Success ? $"OK | 模式={detectModeText} | 判定={judgeModeText} | 检测ROI={num}{text2} | 局部Δ(min/max/mean)={edgeInspectResult.DeltaMin:F2}/{edgeInspectResult.DeltaMax:F2}/{edgeInspectResult.DeltaMean:F2}px" : $"NG | 原因={edgeInspectResult.NgReasonText} | 模式={detectModeText} | 判定={judgeModeText} | 检测ROI={num} | 失败项={edgeInspectResult.DetectResults.Count((DetectRoiInspectResult x) => !x.Success)} | 毛刺={edgeInspectResult.BurrCount} 凹陷={edgeInspectResult.DentCount} 超边={edgeInspectResult.OverEdgeCount} 漏铜={edgeInspectResult.CopperLeakCount}{text2} | 局部Δ(min/max/mean)={edgeInspectResult.DeltaMin:F2}/{edgeInspectResult.DeltaMax:F2}/{edgeInspectResult.DeltaMean:F2}px{text3}");
 				return edgeInspectResult;
 			}
 			finally
@@ -540,10 +1634,6 @@ namespace EdgeAlignInspect
 		{
 		}
 
-		/// <summary>记录单个检测 ROI 的失败结果。</summary>
-		/// <param name="res">总检测结果对象。</param>
-		/// <param name="dr">当前检测 ROI 结果。</param>
-		/// <param name="message">失败说明。</param>
 		private static void AddDetectFailure(EdgeInspectResult res, DetectRoiInspectResult dr, string message)
 		{
 			if (dr != null)
@@ -558,9 +1648,6 @@ namespace EdgeAlignInspect
 			}
 		}
 
-		/// <summary>根据失败信息推断对上位机友好的 NG 原因。</summary>
-		/// <param name="message">失败信息。</param>
-		/// <returns>对应的 NG 原因。</returns>
 		private static NgReason ResolveFailureReason(string message)
 		{
 			if (string.IsNullOrWhiteSpace(message))
@@ -578,10 +1665,6 @@ namespace EdgeAlignInspect
 			return NgReason.DetectRoiFailed;
 		}
 
-		/// <summary>获取判定方式显示文本。</summary>
-		/// <param name="hasReferenceLineItems">是否存在绑定基准线的检测项。</param>
-		/// <param name="hasSelfFitItems">是否存在自拟合判定的检测项。</param>
-		/// <returns>判定方式文本。</returns>
 		private static string GetJudgeModeText(bool hasReferenceLineItems, bool hasSelfFitItems)
 		{
 			if (hasReferenceLineItems && hasSelfFitItems)
@@ -595,10 +1678,6 @@ namespace EdgeAlignInspect
 			return "自拟合线判定";
 		}
 
-		/// <summary>拼接直线拟合失败详情。</summary>
-		/// <param name="message">基础失败说明。</param>
-		/// <param name="fit">直线拟合结果。</param>
-		/// <returns>包含详情的失败说明。</returns>
 		private static string AppendFailureDetail(string message, EdgeLineFit fit)
 		{
 			if (fit == null || string.IsNullOrWhiteSpace(fit.Message))
@@ -608,10 +1687,6 @@ namespace EdgeAlignInspect
 			return message + "：" + fit.Message;
 		}
 
-		/// <summary>拼接圆拟合失败详情。</summary>
-		/// <param name="message">基础失败说明。</param>
-		/// <param name="fit">圆拟合结果。</param>
-		/// <returns>包含详情的失败说明。</returns>
 		private static string AppendFailureDetail(string message, EdgeCircleFit fit)
 		{
 			if (fit == null || string.IsNullOrWhiteSpace(fit.Message))
@@ -621,11 +1696,6 @@ namespace EdgeAlignInspect
 			return message + "：" + fit.Message;
 		}
 
-		/// <summary>执行检测 ROI 的局部毛刺/凹陷判定。</summary>
-		/// <param name="dr">当前检测 ROI 结果。</param>
-		/// <param name="detRoi">运行时检测 ROI。</param>
-		/// <param name="mode">缺陷检测模式。</param>
-		/// <param name="useReferenceLine">保留参数；当前局部判定固定使用检测 ROI 自拟合线。</param>
 		private static void EvaluateDetectItem(DetectRoiInspectResult dr, RotRectF detRoi, DefectDetectMode mode, bool useReferenceLine)
 		{
 			if (dr == null)
@@ -644,7 +1714,9 @@ namespace EdgeAlignInspect
 				dr.Message = "未取得检测点";
 				return;
 			}
-			SignedLine signedLine = SignedLine.FromLine(dr.FittedLine.P1, dr.FittedLine.P2);
+			bool referenceDistanceMode = dr.UseReferenceLine && dr.JudgeLine != null && dr.JudgeLine.Success;
+			EdgeLineFit distanceLine = referenceDistanceMode ? dr.JudgeLine : dr.FittedLine;
+			SignedLine signedLine = SignedLine.FromLine(distanceLine.P1, distanceLine.P2);
 			bool flag = mode == DefectDetectMode.Both || mode == DefectDetectMode.BurrOnly;
 			bool flag2 = mode == DefectDetectMode.Both || mode == DefectDetectMode.DentOnly;
 			bool flag3 = dr.UseExternalBurrTolerance && dr.ExternalBurrTolerance >= 0.0 && dr.PixelResolutionX > 0.0 && dr.PixelResolutionY > 0.0;
@@ -654,18 +1726,22 @@ namespace EdgeAlignInspect
 			double num4 = double.PositiveInfinity;
 			double num5 = double.NegativeInfinity;
 			double num6 = 0.0;
-			double num7 = ResolvePositiveDirectionScale(detRoi, signedLine);
+			double num7 = referenceDistanceMode ? 1.0 : ResolvePositiveDirectionScale(detRoi, signedLine);
 			double physicalDistancePerPixel = GetPhysicalDistancePerPixel(signedLine, dr.PixelResolutionX, dr.PixelResolutionY);
 			for (int i = 0; i < dr.FittedLine.MeasurePoints.Count; i++)
 			{
 				PointF pointF = dr.FittedLine.MeasurePoints[i];
 				double num8 = signedLine.SignedDistance(pointF);
-				double num9 = num8 * num7;
-				double num10 = num9;
+				double num9 = referenceDistanceMode ? Math.Abs(num8) : num8 * num7;
+				double num10 = referenceDistanceMode ? (num9 - dr.NominalDistancePx) : num9;
 				double signedDistanceValue = num9 * physicalDistancePerPixel;
 				double num11 = num10 * physicalDistancePerPixel;
-				bool flag4 = ((!flag3) ? (flag && num10 < 0.0 - dr.BurrTolerancePx) : (flag && num11 < 0.0 - dr.ExternalBurrTolerance));
-				bool flag5 = ((!flag3) ? (flag2 && num10 > dr.DentTolerancePx) : (flag2 && num11 > dr.ExternalDentTolerance));
+				bool flag4 = referenceDistanceMode
+					? (flag3 ? (flag && num11 > dr.ExternalBurrTolerance) : (flag && num10 > dr.BurrTolerancePx))
+					: (flag3 ? (flag && num11 < 0.0 - dr.ExternalBurrTolerance) : (flag && num10 < 0.0 - dr.BurrTolerancePx));
+				bool flag5 = referenceDistanceMode
+					? (flag3 ? (flag2 && num11 < 0.0 - dr.ExternalDentTolerance) : (flag2 && num10 < 0.0 - dr.DentTolerancePx))
+					: (flag3 ? (flag2 && num11 > dr.ExternalDentTolerance) : (flag2 && num10 > dr.DentTolerancePx));
 				if (flag4)
 				{
 					dr.BurrCount++;
@@ -674,15 +1750,15 @@ namespace EdgeAlignInspect
 				{
 					dr.DentCount++;
 				}
-				NgReason pointReasons = NgReason.None;
+				NgReason ngReason = NgReason.None;
 				if (flag4)
 				{
-					pointReasons |= NgReason.Burr;
+					ngReason |= NgReason.Burr;
 					dr.NgReasons |= NgReason.Burr;
 				}
 				if (flag5)
 				{
-					pointReasons |= NgReason.Dent;
+					ngReason |= NgReason.Dent;
 					dr.NgReasons |= NgReason.Dent;
 				}
 				num = Math.Min(num, num9);
@@ -712,7 +1788,7 @@ namespace EdgeAlignInspect
 					DeltaValue = num11,
 					IsBurr = flag4,
 					IsDent = flag5,
-					NgReasons = pointReasons
+					NgReasons = ngReason
 				});
 			}
 			dr.SignedMin = num;
@@ -743,130 +1819,102 @@ namespace EdgeAlignInspect
 			dr.Message = (dr.Success ? $"OK | {text2} | 模式={text} | {text4} | {text3} | 局部Δ(min/max/mean)={dr.DeltaMin:F2}/{dr.DeltaMax:F2}/{dr.DeltaMean:F2}px" : $"NG | {text2} | 模式={text} | {text4} | 毛刺={dr.BurrCount} 凹陷={dr.DentCount} | {text3} | 局部Δ(min/max/mean)={dr.DeltaMin:F2}/{dr.DeltaMax:F2}/{dr.DeltaMean:F2}px");
 		}
 
-		/// <summary>
-		/// 计算整体距离，并按标准距离判定超边或漏铜。
-		/// </summary>
-		/// <param name="dr">当前检测 ROI 结果。</param>
-		/// <param name="referenceLine">整体距离使用的参考线。</param>
-		/// <param name="measurePoint">被测点。</param>
 		private static void EvaluateOverallDistance(DetectRoiInspectResult dr, EdgeLineFit referenceLine, PointF measurePoint)
 		{
 			EvaluateOverallDistance(dr, referenceLine, measurePoint, null);
 		}
 
-		/// <summary>
-		/// 使用检测 ROI 内的实际边缘测量点计算线线整体距离，取中位距离降低局部毛刺/凹陷对整体超边漏铜的影响。
-		/// </summary>
-		/// <param name="dr">当前检测 ROI 结果。</param>
-		/// <param name="referenceLine">整体距离使用的参考线。</param>
 		private static void EvaluateOverallDistanceFromMeasurePoints(DetectRoiInspectResult dr, EdgeLineFit referenceLine)
 		{
-			if (dr == null || dr.FittedLine == null || dr.FittedLine.MeasurePoints == null || dr.FittedLine.MeasurePoints.Count == 0)
-			{
-				return;
-			}
-			if (referenceLine == null || !referenceLine.Success)
+			if (dr == null || dr.FittedLine == null || dr.FittedLine.MeasurePoints == null || dr.FittedLine.MeasurePoints.Count == 0 || referenceLine == null || !referenceLine.Success)
 			{
 				return;
 			}
 			SignedLine signedLine = SignedLine.FromLine(referenceLine.P1, referenceLine.P2);
-			List<PointF> points = dr.FittedLine.MeasurePoints;
-			List<Tuple<double, PointF>> samples = new List<Tuple<double, PointF>>(points.Count);
-			foreach (PointF point in points)
+			List<PointF> measurePoints = dr.FittedLine.MeasurePoints;
+			List<Tuple<double, PointF>> list = new List<Tuple<double, PointF>>(measurePoints.Count);
+			foreach (PointF item in measurePoints)
 			{
-				samples.Add(Tuple.Create(Math.Abs(signedLine.SignedDistance(point)), point));
+				list.Add(Tuple.Create(Math.Abs(signedLine.SignedDistance(item)), item));
 			}
-			samples.Sort((a, b) => a.Item1.CompareTo(b.Item1));
-			int mid = samples.Count / 2;
-			double distancePx;
+			list.Sort((Tuple<double, PointF> a, Tuple<double, PointF> b) => a.Item1.CompareTo(b.Item1));
+			int num = list.Count / 2;
+			double value;
 			PointF measurePoint;
-			if (samples.Count % 2 == 0 && samples.Count > 1)
+			if (list.Count % 2 == 0 && list.Count > 1)
 			{
-				Tuple<double, PointF> a = samples[mid - 1];
-				Tuple<double, PointF> b = samples[mid];
-				distancePx = (a.Item1 + b.Item1) * 0.5;
-				measurePoint = new PointF((a.Item2.X + b.Item2.X) * 0.5f, (a.Item2.Y + b.Item2.Y) * 0.5f);
+				Tuple<double, PointF> tuple = list[num - 1];
+				Tuple<double, PointF> tuple2 = list[num];
+				value = (tuple.Item1 + tuple2.Item1) * 0.5;
+				measurePoint = new PointF((tuple.Item2.X + tuple2.Item2.X) * 0.5f, (tuple.Item2.Y + tuple2.Item2.Y) * 0.5f);
 			}
 			else
 			{
-				distancePx = samples[mid].Item1;
-				measurePoint = samples[mid].Item2;
+				value = list[num].Item1;
+				measurePoint = list[num].Item2;
 			}
-			EvaluateOverallDistance(dr, referenceLine, measurePoint, distancePx);
+			EvaluateOverallDistance(dr, referenceLine, measurePoint, value);
 		}
 
-		/// <summary>写入整体距离结果并判定超边/漏铜。</summary>
-		/// <param name="dr">当前检测 ROI 结果。</param>
-		/// <param name="referenceLine">整体距离使用的参考线。</param>
-		/// <param name="measurePoint">用于显示垂线的代表测量点。</param>
-		/// <param name="measuredDistancePx">已计算出的整体距离；为空时使用代表点距离。</param>
 		private static void EvaluateOverallDistance(DetectRoiInspectResult dr, EdgeLineFit referenceLine, PointF measurePoint, double? measuredDistancePx)
 		{
-			if (dr == null)
+			if (dr != null && referenceLine != null && referenceLine.Success)
 			{
-				return;
-			}
-			if (referenceLine == null || !referenceLine.Success)
-			{
-				return;
-			}
-			SignedLine signedLine = SignedLine.FromLine(referenceLine.P1, referenceLine.P2);
-			PointF footPoint = ProjectPointToLine(measurePoint, referenceLine.P1, referenceLine.P2);
-			double signedDistance = signedLine.SignedDistance(measurePoint);
-			double distancePx = measuredDistancePx.HasValue ? measuredDistancePx.Value : Math.Abs(signedDistance);
-			double physicalDistancePerPixel = GetPhysicalDistancePerPixel(signedLine, dr.PixelResolutionX, dr.PixelResolutionY);
-			double distanceValue = distancePx * physicalDistancePerPixel;
-			double deltaPx = distancePx - dr.NominalDistancePx;
-			double deltaValue = deltaPx * physicalDistancePerPixel;
-			bool useExternalTolerance = dr.UseExternalBurrTolerance && dr.ExternalBurrTolerance >= 0.0 && dr.PixelResolutionX > 0.0 && dr.PixelResolutionY > 0.0;
-			bool overEdge = useExternalTolerance ? deltaValue > dr.ExternalOverEdgeTolerance : deltaPx > dr.BurrTolerancePx;
-			bool copperLeak = useExternalTolerance ? deltaValue < 0.0 - dr.ExternalCopperLeakTolerance : deltaPx < 0.0 - dr.DentTolerancePx;
-			dr.OverallMeasurePoint = measurePoint;
-			dr.OverallFootPoint = footPoint;
-			dr.OverallReferenceLine = CopyLine(referenceLine);
-			dr.ReferenceFootPoint = footPoint;
-			dr.HasOverallDistance = true;
-			dr.HasPointToLineDistance = true;
-			dr.OverallDistancePx = distancePx;
-			dr.OverallDistanceValue = distanceValue;
-			dr.OverallDeltaPx = deltaPx;
-			dr.OverallDeltaValue = deltaValue;
-			dr.IsOverEdge = overEdge;
-			dr.IsCopperLeak = copperLeak;
-			if (overEdge)
-			{
-				dr.NgReasons |= NgReason.OverEdge;
-			}
-			if (copperLeak)
-			{
-				dr.NgReasons |= NgReason.CopperLeak;
-			}
-			dr.MaxPositiveDeltaPx = Math.Max(dr.MaxPositiveDeltaPx, deltaPx);
-			dr.MaxPositiveDeltaValue = Math.Max(dr.MaxPositiveDeltaValue, deltaValue);
-			if (overEdge || copperLeak)
-			{
-				dr.Success = false;
-			}
-			string text = useExternalTolerance ? $"外部允差(mm)：超边={dr.ExternalOverEdgeTolerance:F4} | 漏铜={dr.ExternalCopperLeakTolerance:F4}" : $"毛刺允差={dr.BurrTolerancePx:F2}px | 凹陷允差={dr.DentTolerancePx:F2}px";
-			double nominalValue = dr.NominalDistancePx * physicalDistancePerPixel;
-			string suffix = $" | 整体距离={distanceValue:F4}mm 标准={nominalValue:F4}mm Δ={deltaValue:+0.0000;-0.0000;0.0000}mm | 像素距离={distancePx:F2}px Δ={deltaPx:+0.00;-0.00;0.00}px | {text}";
-			if (overEdge)
-			{
-				dr.Message += " | 超边NG" + suffix;
-			}
-			else if (copperLeak)
-			{
-				dr.Message += " | 漏铜NG" + suffix;
-			}
-			else
-			{
-				dr.Message += " | 整体距离OK" + suffix;
+				SignedLine signedLine = SignedLine.FromLine(referenceLine.P1, referenceLine.P2);
+				PointF pointF = ProjectPointToLine(measurePoint, referenceLine.P1, referenceLine.P2);
+				double value = signedLine.SignedDistance(measurePoint);
+				double num = (measuredDistancePx.HasValue ? measuredDistancePx.Value : Math.Abs(value));
+				double physicalDistancePerPixel = GetPhysicalDistancePerPixel(signedLine, dr.PixelResolutionX, dr.PixelResolutionY);
+				double num2 = num * physicalDistancePerPixel;
+				double num3 = num - dr.NominalDistancePx;
+				double num4 = num3 * physicalDistancePerPixel;
+				bool flag = dr.UseExternalBurrTolerance && dr.ExternalBurrTolerance >= 0.0 && dr.PixelResolutionX > 0.0 && dr.PixelResolutionY > 0.0;
+				bool flag2 = (flag ? (num4 > dr.ExternalOverEdgeTolerance) : (num3 > dr.BurrTolerancePx));
+				bool flag3 = (flag ? (num4 < 0.0 - dr.ExternalCopperLeakTolerance) : (num3 < 0.0 - dr.DentTolerancePx));
+				dr.OverallMeasurePoint = measurePoint;
+				dr.OverallFootPoint = pointF;
+				dr.OverallReferenceLine = CopyLine(referenceLine);
+				dr.ReferenceFootPoint = pointF;
+				dr.HasOverallDistance = true;
+				dr.HasPointToLineDistance = true;
+				dr.OverallDistancePx = num;
+				dr.OverallDistanceValue = num2;
+				dr.OverallDeltaPx = num3;
+				dr.OverallDeltaValue = num4;
+				dr.IsOverEdge = flag2;
+				dr.IsCopperLeak = flag3;
+				if (flag2)
+				{
+					dr.NgReasons |= NgReason.OverEdge;
+				}
+				if (flag3)
+				{
+					dr.NgReasons |= NgReason.CopperLeak;
+				}
+				dr.MaxPositiveDeltaPx = Math.Max(dr.MaxPositiveDeltaPx, num3);
+				dr.MaxPositiveDeltaValue = Math.Max(dr.MaxPositiveDeltaValue, num4);
+				if (flag2 || flag3)
+				{
+					dr.Success = false;
+				}
+				string text = (flag ? $"外部允差(mm)：超边={dr.ExternalOverEdgeTolerance:F4} | 漏铜={dr.ExternalCopperLeakTolerance:F4}" : $"毛刺允差={dr.BurrTolerancePx:F2}px | 凹陷允差={dr.DentTolerancePx:F2}px");
+				double num5 = dr.NominalDistancePx * physicalDistancePerPixel;
+				string text2 = $" | 整体距离={num2:F4}mm 标准={num5:F4}mm Δ={num4:+0.0000;-0.0000;0.0000}mm | 像素距离={num:F2}px Δ={num3:+0.00;-0.00;0.00}px | {text}";
+				if (flag2)
+				{
+					dr.Message = dr.Message + " | 超边NG" + text2;
+				}
+				else if (flag3)
+				{
+					dr.Message = dr.Message + " | 漏铜NG" + text2;
+				}
+				else
+				{
+					dr.Message = dr.Message + " | 整体距离OK" + text2;
+				}
 			}
 		}
 
-		/// <summary>获取检测模式显示文本。</summary>
-		/// <param name="mode">检测模式。</param>
-		/// <returns>模式文本。</returns>
 		private static string GetDetectModeText(DefectDetectMode mode)
 		{
 			switch (mode)
@@ -882,10 +1930,6 @@ namespace EdgeAlignInspect
 			}
 		}
 
-		/// <summary>计算检测线相对角度参考的夹角。</summary>
-		/// <param name="dr">当前检测 ROI 结果。</param>
-		/// <param name="baseLineMap">线基准拟合结果表。</param>
-		/// <param name="circleBaseLineMap">圆基准拟合结果表。</param>
 		private static void ComputeAngleReference(DetectRoiInspectResult dr, Dictionary<int, EdgeLineFit> baseLineMap, Dictionary<int, EdgeLineFit> circleBaseLineMap)
 		{
 			if (dr == null)
@@ -945,9 +1989,6 @@ namespace EdgeAlignInspect
 			}
 		}
 
-		/// <summary>将线方向角差归一化到等价的最小夹角。</summary>
-		/// <param name="delta">原始角差，单位为弧度。</param>
-		/// <returns>归一化后的角差，单位为弧度。</returns>
 		private static double NormalizeLineAngleDelta(double delta)
 		{
 			while (delta > Math.PI)
@@ -969,10 +2010,6 @@ namespace EdgeAlignInspect
 			return delta;
 		}
 
-		/// <summary>确定 ROI 箭头方向与有符号线法向的一致性。</summary>
-		/// <param name="rr">检测 ROI。</param>
-		/// <param name="line">有符号判定线。</param>
-		/// <returns>方向一致返回 1，否则返回 -1。</returns>
 		private static double ResolvePositiveDirectionScale(RotRectF rr, SignedLine line)
 		{
 			double num = 0.0 - Math.Sin(rr.AngleRad);
@@ -981,11 +2018,6 @@ namespace EdgeAlignInspect
 			return (num3 >= 0.0) ? 1.0 : (-1.0);
 		}
 
-		/// <summary>计算沿指定法向的单像素物理尺寸。</summary>
-		/// <param name="line">有符号线。</param>
-		/// <param name="pixelResolutionX">X 方向像素分辨率。</param>
-		/// <param name="pixelResolutionY">Y 方向像素分辨率。</param>
-		/// <returns>沿线法向的单像素物理尺寸。</returns>
 		private static double GetPhysicalDistancePerPixel(SignedLine line, double pixelResolutionX, double pixelResolutionY)
 		{
 			if (line == null)
@@ -1014,11 +2046,6 @@ namespace EdgeAlignInspect
 			return (num3 > 0.0) ? num3 : ((pixelResolutionX + pixelResolutionY) * 0.5);
 		}
 
-		/// <summary>将点投影到指定直线上。</summary>
-		/// <param name="p">待投影点。</param>
-		/// <param name="a">直线上的第一个点。</param>
-		/// <param name="b">直线上的第二个点。</param>
-		/// <returns>垂足坐标。</returns>
 		private static PointF ProjectPointToLine(PointF p, PointF a, PointF b)
 		{
 			double num = b.X - a.X;
@@ -1028,13 +2055,10 @@ namespace EdgeAlignInspect
 			{
 				return a;
 			}
-			double num4 = ((p.X - a.X) * num + (p.Y - a.Y) * num2) / num3;
-			return new PointF((float)(a.X + num4 * num), (float)(a.Y + num4 * num2));
+			double num4 = ((double)(p.X - a.X) * num + (double)(p.Y - a.Y) * num2) / num3;
+			return new PointF((float)((double)a.X + num4 * num), (float)((double)a.Y + num4 * num2));
 		}
 
-		/// <summary>导出 HALCON 形状模板为字节数组。</summary>
-		/// <param name="modelId">HALCON 模板句柄。</param>
-		/// <returns>序列化模板字节。</returns>
 		private static byte[] ExportShapeModelToBytes(HTuple modelId)
 		{
 			if (modelId == null || modelId.Length == 0)
@@ -1070,9 +2094,6 @@ namespace EdgeAlignInspect
 			}
 		}
 
-		/// <summary>从字节数组导入 HALCON 形状模板。</summary>
-		/// <param name="bytes">序列化模板字节。</param>
-		/// <returns>HALCON 模板句柄。</returns>
 		private static HTuple ImportShapeModelFromBytes(byte[] bytes)
 		{
 			if (bytes == null || bytes.Length == 0)
@@ -1107,18 +2128,11 @@ namespace EdgeAlignInspect
 			}
 		}
 
-		/// <summary>生成 HALCON 旋转矩形区域。</summary>
-		/// <param name="rr">旋转矩形 ROI。</param>
-		/// <param name="rect2">输出的 HALCON 区域对象。</param>
 		private static void GenRectangle2(RotRectF rr, out HObject rect2)
 		{
 			HOperatorSet.GenRectangle2(out rect2, rr.Center.Y, rr.Center.X, rr.AngleRad, rr.HalfLen1, rr.HalfLen2);
 		}
 
-		/// <summary>使用仿射矩阵变换旋转矩形 ROI。</summary>
-		/// <param name="rr">原始旋转矩形 ROI。</param>
-		/// <param name="hom">HALCON 仿射矩阵。</param>
-		/// <returns>变换后的旋转矩形 ROI。</returns>
 		private static RotRectF TransformRotRect(RotRectF rr, HTuple hom)
 		{
 			if (rr.IsEmpty)
@@ -1133,10 +2147,6 @@ namespace EdgeAlignInspect
 			return new RotRectF(new PointF((float)qy.D, (float)qx.D), RotRectF.NormalizeAngle((float)num3), rr.HalfLen1, rr.HalfLen2);
 		}
 
-		/// <summary>使用仿射矩阵变换圆 ROI 的中心。</summary>
-		/// <param name="circle">原始圆 ROI。</param>
-		/// <param name="hom">HALCON 仿射矩阵。</param>
-		/// <returns>变换后的圆 ROI。</returns>
 		private static CircleRoiF TransformCircleRoi(CircleRoiF circle, HTuple hom)
 		{
 			if (circle.IsEmpty)
@@ -1147,10 +2157,6 @@ namespace EdgeAlignInspect
 			return new CircleRoiF(new PointF((float)qy.D, (float)qx.D), circle.Radius);
 		}
 
-		/// <summary>将旋转矩形长轴转换为线段。</summary>
-		/// <param name="rr">旋转矩形 ROI。</param>
-		/// <param name="p1">线段起点。</param>
-		/// <param name="p2">线段终点。</param>
 		private static void ResolveRotRectToLine(RotRectF rr, out PtD p1, out PtD p2)
 		{
 			double num = Math.Cos(rr.AngleRad) * (double)rr.HalfLen1;
@@ -1159,13 +2165,6 @@ namespace EdgeAlignInspect
 			p2 = new PtD((double)rr.Center.X + num, (double)rr.Center.Y + num2);
 		}
 
-		/// <summary>在旋转矩形 ROI 内执行卡尺找边并拟合直线。</summary>
-		/// <param name="gray">灰度图像。</param>
-		/// <param name="width">图像宽度。</param>
-		/// <param name="height">图像高度。</param>
-		/// <param name="rr">检测或基准 ROI。</param>
-		/// <param name="cp">卡尺参数。</param>
-		/// <returns>直线拟合结果。</returns>
 		private static EdgeLineFit FitLineInRotRoi(HImage gray, int width, int height, RotRectF rr, CaliperParameters cp)
 		{
 			EdgeLineFit edgeLineFit = new EdgeLineFit
@@ -1234,13 +2233,6 @@ namespace EdgeAlignInspect
 			}
 		}
 
-		/// <summary>在圆 ROI 周向采样并拟合圆。</summary>
-		/// <param name="gray">灰度图像。</param>
-		/// <param name="width">图像宽度。</param>
-		/// <param name="height">图像高度。</param>
-		/// <param name="roi">圆 ROI。</param>
-		/// <param name="cp">圆卡尺参数。</param>
-		/// <returns>圆拟合结果。</returns>
 		private static EdgeCircleFit FitCircleInRoi(HImage gray, int width, int height, CircleRoiF roi, CaliperParameters cp)
 		{
 			EdgeCircleFit edgeCircleFit = new EdgeCircleFit
@@ -1257,11 +2249,9 @@ namespace EdgeAlignInspect
 				for (int i = 0; i < num; i++)
 				{
 					double angle = Math.PI * 2.0 * (double)i / (double)num;
-					double measuredRow;
-					double measuredCol;
-					if (TryMeasureRadialCircleEdge(gray, width, height, roi, caliperParameters, angle, outward, inwardLength, out measuredRow, out measuredCol))
+					if (TryMeasureRadialCircleEdge(gray, width, height, roi, caliperParameters, angle, outward, inwardLength, out var row, out var col))
 					{
-						edgeCircleFit.MeasurePoints.Add(new PointF((float)measuredCol, (float)measuredRow));
+						edgeCircleFit.MeasurePoints.Add(new PointF((float)col, (float)row));
 					}
 				}
 				if (edgeCircleFit.MeasurePoints.Count < 3)
@@ -1269,15 +2259,11 @@ namespace EdgeAlignInspect
 					edgeCircleFit.Message = "圆测量点不足（请检查圆ROI、圆外扩、阈值/极性）";
 					return edgeCircleFit;
 				}
-				HTuple fitRows = new HTuple(edgeCircleFit.MeasurePoints.Select((PointF p) => (double)p.Y).ToArray());
-				HTuple fitCols = new HTuple(edgeCircleFit.MeasurePoints.Select((PointF p) => (double)p.X).ToArray());
-				double row2;
-				double col;
-				double radius;
-				string error;
-				if (TryFitCircleStable(fitRows, fitCols, out row2, out col, out radius, out error))
+				HTuple rows = new HTuple(((IEnumerable<PointF>)edgeCircleFit.MeasurePoints).Select((Func<PointF, double>)((PointF p) => p.Y)).ToArray());
+				HTuple cols = new HTuple(((IEnumerable<PointF>)edgeCircleFit.MeasurePoints).Select((Func<PointF, double>)((PointF p) => p.X)).ToArray());
+				if (TryFitCircleStable(rows, cols, out var row2, out var col2, out var radius, out var error))
 				{
-					edgeCircleFit.Center = new PointF((float)col, (float)row2);
+					edgeCircleFit.Center = new PointF((float)col2, (float)row2);
 					edgeCircleFit.Radius = radius;
 					edgeCircleFit.Success = true;
 				}
@@ -1297,40 +2283,24 @@ namespace EdgeAlignInspect
 			}
 		}
 
-		/// <summary>沿圆的一个径向方向测量边缘点。</summary>
-		/// <param name="gray">灰度图像。</param>
-		/// <param name="width">图像宽度。</param>
-		/// <param name="height">图像高度。</param>
-		/// <param name="roi">圆 ROI。</param>
-		/// <param name="cp">圆卡尺参数。</param>
-		/// <param name="angle">径向角度。</param>
-		/// <param name="outward">向外搜索长度。</param>
-		/// <param name="inwardLength">向内搜索长度。</param>
-		/// <param name="row">输出边缘行坐标。</param>
-		/// <param name="col">输出边缘列坐标。</param>
-		/// <returns>是否测量到边缘点。</returns>
 		private static bool TryMeasureRadialCircleEdge(HImage gray, int width, int height, CircleRoiF roi, CaliperParameters cp, double angle, double outward, double inwardLength, out double row, out double col)
 		{
 			row = (col = 0.0);
 			HTuple measureHandle = new HTuple();
-			double dirCol = Math.Cos(angle);
-			double dirRow = Math.Sin(angle);
-			double startRadius = Math.Max(1.0, (double)roi.Radius + outward);
-			double minRadius = Math.Max(0.0, (double)roi.Radius - inwardLength);
-			double searchLength = Math.Max(1.0, startRadius - minRadius);
-			double midRadius = startRadius - searchLength * 0.5;
-			double midRow = (double)roi.Center.Y + dirRow * midRadius;
-			double midCol = (double)roi.Center.X + dirCol * midRadius;
-			double phi = Math.Atan2(dirRow, dirCol);
+			double num = Math.Cos(angle);
+			double num2 = Math.Sin(angle);
+			double num3 = Math.Max(1.0, (double)roi.Radius + outward);
+			double num4 = Math.Max(0.0, (double)roi.Radius - inwardLength);
+			double num5 = Math.Max(1.0, num3 - num4);
+			double num6 = num3 - num5 * 0.5;
+			double num7 = (double)roi.Center.Y + num2 * num6;
+			double num8 = (double)roi.Center.X + num * num6;
+			double num9 = Math.Atan2(num2, num);
 			try
 			{
-				HOperatorSet.GenMeasureRectangle2(midRow, midCol, phi, searchLength * 0.5, Math.Max(0.5, cp.MeasureWidth), width, height, string.IsNullOrWhiteSpace(cp.MeasureInterpolation) ? "bicubic" : cp.MeasureInterpolation, out measureHandle);
-				HTuple rowEdge;
-				HTuple columnEdge;
-				HTuple amplitude;
-				HTuple distance;
-				HOperatorSet.MeasurePos(gray, measureHandle, cp.Sigma, cp.Threshold, string.IsNullOrWhiteSpace(cp.Transition) ? "all" : cp.Transition, "all", out rowEdge, out columnEdge, out amplitude, out distance);
-				return TryPickOutermostCircleEdge(roi, rowEdge, columnEdge, minRadius, startRadius, out row, out col);
+				HOperatorSet.GenMeasureRectangle2(num7, num8, num9, num5 * 0.5, Math.Max(0.5, cp.MeasureWidth), width, height, string.IsNullOrWhiteSpace(cp.MeasureInterpolation) ? "bicubic" : cp.MeasureInterpolation, out measureHandle);
+				HOperatorSet.MeasurePos(gray, measureHandle, cp.Sigma, cp.Threshold, string.IsNullOrWhiteSpace(cp.Transition) ? "all" : cp.Transition, "all", out var rowEdge, out var columnEdge, out var _, out var _);
+				return TryPickOutermostCircleEdge(roi, rowEdge, columnEdge, num4, num3, out row, out col);
 			}
 			catch
 			{
@@ -1351,15 +2321,6 @@ namespace EdgeAlignInspect
 			}
 		}
 
-		/// <summary>从径向测量候选点中选取最外侧圆边缘点。</summary>
-		/// <param name="roi">圆 ROI。</param>
-		/// <param name="edgeRows">候选点行坐标集合。</param>
-		/// <param name="edgeCols">候选点列坐标集合。</param>
-		/// <param name="minRadius">允许的最小半径。</param>
-		/// <param name="maxRadius">允许的最大半径。</param>
-		/// <param name="row">输出边缘行坐标。</param>
-		/// <param name="col">输出边缘列坐标。</param>
-		/// <returns>是否选出有效点。</returns>
 		private static bool TryPickOutermostCircleEdge(CircleRoiF roi, HTuple edgeRows, HTuple edgeCols, double minRadius, double maxRadius, out double row, out double col)
 		{
 			row = (col = 0.0);
@@ -1367,50 +2328,42 @@ namespace EdgeAlignInspect
 			{
 				return false;
 			}
-			double bestDist = double.NegativeInfinity;
-			int best = -1;
+			double num = double.NegativeInfinity;
+			int num2 = -1;
 			for (int i = 0; i < edgeRows.Length && i < edgeCols.Length; i++)
 			{
-				double dx = edgeCols[i].D - (double)roi.Center.X;
-				double dy = edgeRows[i].D - (double)roi.Center.Y;
-				double dist = Math.Sqrt(dx * dx + dy * dy);
-				if (dist >= minRadius - 2.0 && dist <= maxRadius + 2.0 && dist > bestDist)
+				double num3 = edgeCols[i].D - (double)roi.Center.X;
+				double num4 = edgeRows[i].D - (double)roi.Center.Y;
+				double num5 = Math.Sqrt(num3 * num3 + num4 * num4);
+				if (num5 >= minRadius - 2.0 && num5 <= maxRadius + 2.0 && num5 > num)
 				{
-					bestDist = dist;
-					best = i;
+					num = num5;
+					num2 = i;
 				}
 			}
-			if (best < 0)
+			if (num2 < 0)
 			{
 				for (int j = 0; j < edgeRows.Length && j < edgeCols.Length; j++)
 				{
-					double dx2 = edgeCols[j].D - (double)roi.Center.X;
-					double dy2 = edgeRows[j].D - (double)roi.Center.Y;
-					double dist2 = Math.Sqrt(dx2 * dx2 + dy2 * dy2);
-					if (dist2 > bestDist)
+					double num6 = edgeCols[j].D - (double)roi.Center.X;
+					double num7 = edgeRows[j].D - (double)roi.Center.Y;
+					double num8 = Math.Sqrt(num6 * num6 + num7 * num7);
+					if (num8 > num)
 					{
-						bestDist = dist2;
-						best = j;
+						num = num8;
+						num2 = j;
 					}
 				}
 			}
-			if (best < 0)
+			if (num2 < 0)
 			{
 				return false;
 			}
-			row = edgeRows[best].D;
-			col = edgeCols[best].D;
+			row = edgeRows[num2].D;
+			col = edgeCols[num2].D;
 			return true;
 		}
 
-		/// <summary>使用 HALCON 对点集进行稳定圆拟合。</summary>
-		/// <param name="rows">拟合点行坐标集合。</param>
-		/// <param name="cols">拟合点列坐标集合。</param>
-		/// <param name="row">输出圆心行坐标。</param>
-		/// <param name="col">输出圆心列坐标。</param>
-		/// <param name="radius">输出圆半径。</param>
-		/// <param name="error">输出失败原因。</param>
-		/// <returns>圆拟合是否成功。</returns>
 		private static bool TryFitCircleStable(HTuple rows, HTuple cols, out double row, out double col, out double radius, out string error)
 		{
 			row = (col = (radius = 0.0));
@@ -1446,12 +2399,6 @@ namespace EdgeAlignInspect
 			}
 		}
 
-		/// <summary>筛选靠近圆 ROI 内侧的拟合点。</summary>
-		/// <param name="roi">圆 ROI。</param>
-		/// <param name="rows">原始点行坐标集合。</param>
-		/// <param name="cols">原始点列坐标集合。</param>
-		/// <param name="fitRows">输出筛选后的行坐标集合。</param>
-		/// <param name="fitCols">输出筛选后的列坐标集合。</param>
 		private static void SelectInnerCirclePoints(CircleRoiF roi, HTuple rows, HTuple cols, out HTuple fitRows, out HTuple fitCols)
 		{
 			List<double> list = new List<double>();
@@ -1481,10 +2428,6 @@ namespace EdgeAlignInspect
 			}
 		}
 
-		/// <summary>设置圆测量模型的卡尺参数。</summary>
-		/// <param name="handle">HALCON 测量模型句柄。</param>
-		/// <param name="idx">测量对象索引。</param>
-		/// <param name="cp">卡尺参数。</param>
 		private static void SetCircleMetrologyParams(HTuple handle, HTuple idx, CaliperParameters cp)
 		{
 			HOperatorSet.SetMetrologyObjectParam(handle, idx, "num_measures", cp.NumMeasures);
@@ -1493,12 +2436,6 @@ namespace EdgeAlignInspect
 			HOperatorSet.SetMetrologyObjectParam(handle, idx, "measure_transition", string.IsNullOrWhiteSpace(cp.Transition) ? "all" : cp.Transition);
 		}
 
-		/// <summary>根据两个圆心生成贯穿图像的基准线。</summary>
-		/// <param name="c1">第一个圆心。</param>
-		/// <param name="c2">第二个圆心。</param>
-		/// <param name="width">图像宽度。</param>
-		/// <param name="height">图像高度。</param>
-		/// <returns>由两个圆心确定的直线结果。</returns>
 		private static EdgeLineFit LineFromCircleCenters(PointF c1, PointF c2, int width, int height)
 		{
 			EdgeLineFit edgeLineFit = new EdgeLineFit
@@ -1530,10 +2467,6 @@ namespace EdgeAlignInspect
 			return edgeLineFit;
 		}
 
-		/// <summary>设置直线测量模型的卡尺参数。</summary>
-		/// <param name="handle">HALCON 测量模型句柄。</param>
-		/// <param name="idx">测量对象索引。</param>
-		/// <param name="cp">卡尺参数。</param>
 		private static void SetMetrologyParams(HTuple handle, HTuple idx, CaliperParameters cp)
 		{
 			HOperatorSet.SetMetrologyObjectParam(handle, idx, "num_measures", cp.NumMeasures);
@@ -1542,8 +2475,6 @@ namespace EdgeAlignInspect
 			HOperatorSet.SetMetrologyObjectParam(handle, idx, "measure_transition", string.IsNullOrWhiteSpace(cp.Transition) ? "all" : cp.Transition);
 		}
 
-		/// <summary>修正卡尺参数中的无效默认值。</summary>
-		/// <param name="cp">待修正的卡尺参数。</param>
 		private static void NormalizeCaliper(CaliperParameters cp)
 		{
 			if (cp != null)
@@ -1564,15 +2495,15 @@ namespace EdgeAlignInspect
 				{
 					cp.Sigma = 1.0;
 				}
-			if (cp.Threshold <= 0.0)
-			{
-				cp.Threshold = 1.0;
-			}
-			if (cp.SearchOutward < 0.0)
-			{
-				cp.SearchOutward = 0.0;
-			}
-			if (string.IsNullOrWhiteSpace(cp.MeasureInterpolation))
+				if (cp.Threshold <= 0.0)
+				{
+					cp.Threshold = 1.0;
+				}
+				if (cp.SearchOutward < 0.0)
+				{
+					cp.SearchOutward = 0.0;
+				}
+				if (string.IsNullOrWhiteSpace(cp.MeasureInterpolation))
 				{
 					cp.MeasureInterpolation = "bicubic";
 				}
@@ -1587,18 +2518,6 @@ namespace EdgeAlignInspect
 			}
 		}
 
-		/// <summary>使用 HALCON 对点集进行稳定直线拟合。</summary>
-		/// <param name="rows">拟合点行坐标集合。</param>
-		/// <param name="cols">拟合点列坐标集合。</param>
-		/// <param name="width">图像宽度。</param>
-		/// <param name="height">图像高度。</param>
-		/// <param name="r1">输出线段起点行坐标。</param>
-		/// <param name="c1">输出线段起点列坐标。</param>
-		/// <param name="r2">输出线段终点行坐标。</param>
-		/// <param name="c2">输出线段终点列坐标。</param>
-		/// <param name="angle">输出直线角度。</param>
-		/// <param name="error">输出失败原因。</param>
-		/// <returns>直线拟合是否成功。</returns>
 		private static bool TryFitLineStable(HTuple rows, HTuple cols, int width, int height, out double r1, out double c1, out double r2, out double c2, out double angle, out string error)
 		{
 			r1 = (c1 = (r2 = (c2 = (angle = 0.0))));
@@ -1653,18 +2572,6 @@ namespace EdgeAlignInspect
 			}
 		}
 
-		/// <summary>将无限长直线裁剪到图像边界内。</summary>
-		/// <param name="r0">直线参考点行坐标。</param>
-		/// <param name="c0">直线参考点列坐标。</param>
-		/// <param name="dr">行方向单位向量分量。</param>
-		/// <param name="dc">列方向单位向量分量。</param>
-		/// <param name="width">图像宽度。</param>
-		/// <param name="height">图像高度。</param>
-		/// <param name="rA">输出裁剪端点 A 行坐标。</param>
-		/// <param name="cA">输出裁剪端点 A 列坐标。</param>
-		/// <param name="rB">输出裁剪端点 B 行坐标。</param>
-		/// <param name="cB">输出裁剪端点 B 列坐标。</param>
-		/// <returns>是否得到有效裁剪线段。</returns>
 		private static bool ClipInfiniteLineToImage(double r0, double c0, double dr, double dc, int width, int height, out double rA, out double cA, out double rB, out double cB)
 		{
 			rA = (cA = (rB = (cB = 0.0)));
@@ -1719,9 +2626,6 @@ namespace EdgeAlignInspect
 			}
 		}
 
-		/// <summary>复制直线拟合结果。</summary>
-		/// <param name="src">源直线拟合结果。</param>
-		/// <returns>复制后的直线拟合结果。</returns>
 		private static EdgeLineFit CopyLine(EdgeLineFit src)
 		{
 			if (src == null)
@@ -1743,13 +2647,6 @@ namespace EdgeAlignInspect
 			return edgeLineFit;
 		}
 
-		/// <summary>将位图转换为 HALCON 灰度图。</summary>
-		/// <param name="bmp">输入位图。</param>
-		/// <param name="gray">输出灰度字节数组。</param>
-		/// <param name="w">输出图像宽度。</param>
-		/// <param name="h">输出图像高度。</param>
-		/// <param name="grayHandle">输出灰度数组固定句柄。</param>
-		/// <returns>HALCON 灰度图像。</returns>
 		private static HImage BitmapToGrayHImage(Bitmap bmp, out byte[] gray, out int w, out int h, out GCHandle grayHandle)
 		{
 			w = bmp.Width;

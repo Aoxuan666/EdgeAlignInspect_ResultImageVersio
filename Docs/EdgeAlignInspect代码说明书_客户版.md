@@ -95,7 +95,17 @@
 
 ```csharp
 TemplateEdgeInspectSdk sdk = new TemplateEdgeInspectSdk();
-EdgeInspectJob job = sdk.OpenSetupDialog(image, currentJob);
+EdgeInspectionToleranceOptions options = new EdgeInspectionToleranceOptions
+{
+    BurrToleranceMm = 0.05,
+    DentToleranceMm = 0.05,
+    OverEdgeToleranceMm = 0.05,
+    CopperLeakToleranceMm = 0.05,
+    PixelResolutionX = 0.01,
+    PixelResolutionY = 0.01
+};
+
+EdgeInspectJob job = sdk.OpenSetupDialog(image, currentJob, options);
 ```
 
 当客户点击“确认配置”时，返回配置后的 `EdgeInspectJob`。如果客户取消窗口，则返回 `null`。

@@ -1,25 +1,32 @@
 # Build outputs
 bin/
 obj/
-
-# Visual Studio / local IDE state
 .vs/
+.dotnet/
+
+# User and IDE files
 *.user
 *.suo
+*.rsuser
 *.userosscache
 *.sln.docstates
 
-# Local .NET CLI state
-.dotnet/
-
-# NuGet restored packages
-packages/
-
-# Codex/local backups and generated self-test artifacts
-.codex_backup_resultimage/
-SelfTestOutput/
-
-# Logs and temporary files
+# Logs and temporary output
+stdout
 *.log
 *.tmp
-*.bak
+
+# Local backup/recovery files
+*.corruptbak
+*.codexbak*
+*.bad_*
+*.pathcachebak_*
+*.copycheck.cs
+*.rgtext.cs
+*.extracted.cs
+
+# Local diagnostic snapshots
+codex_threads_fix_snapshot.sql
+
+# NuGet package cache; project keeps Lib/halcondotnet.dll as the referenced assembly.
+packages/

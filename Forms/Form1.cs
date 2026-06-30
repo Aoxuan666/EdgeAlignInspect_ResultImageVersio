@@ -40,6 +40,8 @@ namespace EdgeAlignInspect
 
 		private bool _pendingImportedDisplayRefresh = false;
 
+		private bool _hasUnsavedChanges = false;
+
 		private readonly List<BaseBindingOption> _baseBindingOptions = new List<BaseBindingOption>();
 
 		private IContainer components = null;
@@ -63,6 +65,8 @@ namespace EdgeAlignInspect
 		private Button btnAddDetectRoi;
 
 		private Button btnDeleteRoi;
+
+		private Button btnTemplateSettings;
 
 		private Button btnSaveTeach;
 
@@ -129,6 +133,7 @@ namespace EdgeAlignInspect
 		public Form1()
 		{
 			InitializeComponent();
+			canvas.ShowTemplateRoi = false;
 			lblRoiHint.Text = string.Empty;
 			lblRoiHint.Visible = false;
 			lblRoiHint.Height = 0;
@@ -214,6 +219,7 @@ namespace EdgeAlignInspect
 				_job.TemplateRoi = CreateDefaultTemplateRoi();
 			}
 			_savedJob = _job.DeepClone();
+			_hasUnsavedChanges = false;
 			_suppressUiEvents = true;
 			_suppressRoiChanged = true;
 			try
@@ -255,6 +261,19 @@ namespace EdgeAlignInspect
 
 		public EdgeInspectResult RunInspectionForSdk(EdgeInspectJob job, double acceptedTolerance, double pixelResolutionX, double pixelResolutionY, bool returnResultImage)
 		{
+			return RunInspectionForSdk(job, new EdgeInspectionToleranceOptions
+			{
+				BurrToleranceMm = acceptedTolerance,
+				DentToleranceMm = acceptedTolerance,
+				OverEdgeToleranceMm = acceptedTolerance,
+				CopperLeakToleranceMm = acceptedTolerance,
+				PixelResolutionX = pixelResolutionX,
+				PixelResolutionY = pixelResolutionY
+			}, returnResultImage);
+		}
+
+		public EdgeInspectResult RunInspectionForSdk(EdgeInspectJob job, EdgeInspectionToleranceOptions options, bool returnResultImage)
+		{
 			if (_src == null)
 			{
 				return new EdgeInspectResult
@@ -264,11 +283,24 @@ namespace EdgeAlignInspect
 					Message = "Input image is null."
 				};
 			}
+			if (options == null)
+			{
+				return new EdgeInspectResult
+				{
+					Success = false,
+					NgReasons = NgReason.ParameterInvalid,
+					Message = "Tolerance options parameter is null."
+				};
+			}
 			EdgeInspectJob edgeInspectJob = (job ?? _job)?.DeepClone() ?? new EdgeInspectJob();
 			edgeInspectJob.UseExternalBurrTolerance = true;
-			edgeInspectJob.ExternalBurrTolerance = acceptedTolerance;
-			edgeInspectJob.PixelResolutionX = pixelResolutionX;
-			edgeInspectJob.PixelResolutionY = pixelResolutionY;
+			edgeInspectJob.ExternalBurrTolerance = options.BurrToleranceMm;
+			edgeInspectJob.ExternalDentTolerance = options.DentToleranceMm;
+			edgeInspectJob.ExternalOverEdgeTolerance = options.OverEdgeToleranceMm;
+			edgeInspectJob.ExternalCopperLeakTolerance = options.CopperLeakToleranceMm;
+			edgeInspectJob.PixelResolutionX = options.PixelResolutionX;
+			edgeInspectJob.PixelResolutionY = options.PixelResolutionY;
+			edgeInspectJob.Normalize();
 			EdgeInspectResult edgeInspectResult = _proc.Inspect(_src, edgeInspectJob);
 			ShowResult(edgeInspectResult);
 			LastResultImage?.Dispose();
@@ -291,7 +323,6 @@ namespace EdgeAlignInspect
 			LayoutRightPanelOnePage();
 			FixRightPanelLayout();
 			PerformLayout();
-			splitMain.PerformLayout();
 			splitMain.Panel1.PerformLayout();
 			canvas.PerformLayout();
 			canvas.FitToWindow();
@@ -505,6 +536,7 @@ namespace EdgeAlignInspect
 					canvas.ClearRuntimeRois();
 					canvas.Invalidate();
 					_resultValid = false;
+					_hasUnsavedChanges = true;
 					if (flag)
 					{
 						SetReady("READY", "已启用模板匹配：若当前无模板ROI，已自动补默认模板ROI。");
@@ -623,19 +655,20 @@ namespace EdgeAlignInspect
 					{
 						_job.BaseRois.RemoveAt(index);
 					}
-			else if ((kind == CanvasRoiKind.CircleBase1 || kind == CanvasRoiKind.CircleBase2) && index >= 0 && index < _job.CircleBaseRois.Count)
-			{
-				_job.CircleBaseRois.RemoveAt(index);
-			}
-			else if (kind == CanvasRoiKind.CirclePoint && index >= 0 && index < _job.CirclePointRois.Count)
-			{
-				_job.CirclePointRois.RemoveAt(index);
-			}
+					else if ((kind == CanvasRoiKind.CircleBase1 || kind == CanvasRoiKind.CircleBase2) && index >= 0 && index < _job.CircleBaseRois.Count)
+					{
+						_job.CircleBaseRois.RemoveAt(index);
+					}
+					else if (kind == CanvasRoiKind.CirclePoint && index >= 0 && index < _job.CirclePointRois.Count)
+					{
+						_job.CirclePointRois.RemoveAt(index);
+					}
 					else if (kind == CanvasRoiKind.Detect && index >= 0 && index < _job.DetectItems.Count)
 					{
 						_job.DetectItems.RemoveAt(index);
 					}
 					PullCanvasRoisToJob();
+					_hasUnsavedChanges = true;
 					NormalizeDetectBaseBindings();
 					RefreshBaseBindingCombo();
 					if (_job.DetectItems.Count > 0)
@@ -668,6 +701,10 @@ namespace EdgeAlignInspect
 					SetReady("READY", "已删除选中的ROI。");
 				}
 			};
+			btnTemplateSettings.Click += delegate
+			{
+				OpenTemplateSettings();
+			};
 			btnSaveTeach.Click += delegate
 			{
 				if (_src == null)
@@ -679,6 +716,7 @@ namespace EdgeAlignInspect
 				{
 					_savedJob = BuildJobForReturn();
 					_job = _savedJob.DeepClone();
+					_hasUnsavedChanges = false;
 					SetReady("已保存", _job.Match.Enabled ? "参数、各ROI独立卡尺参数与模板已保存到当前 Job。毛刺公差由上位机传入。" : "参数与各ROI独立卡尺参数已保存（模板匹配关闭）。毛刺公差由上位机传入。");
 				}
 				catch (Exception ex)
@@ -696,8 +734,7 @@ namespace EdgeAlignInspect
 				try
 				{
 					EdgeInspectJob src = BuildJobForReturn();
-					_savedJob = src.DeepClone();
-					_job = _savedJob.DeepClone();
+					_job = src.DeepClone();
 					EdgeInspectResult r = _proc.Inspect(_src, src.DeepClone());
 					_resultValid = true;
 					ShowResult(r);
@@ -715,8 +752,13 @@ namespace EdgeAlignInspect
 			{
 				BtnConfirmInternal();
 			};
-			base.FormClosing += delegate
+			base.FormClosing += delegate(object sender, FormClosingEventArgs e)
 			{
+				if (!ConfirmSaveBeforeClose())
+				{
+					e.Cancel = true;
+					return;
+				}
 				_src?.Dispose();
 				_proc.Dispose();
 			};
@@ -833,6 +875,53 @@ namespace EdgeAlignInspect
 			PullCanvasRoisToJob();
 			NormalizeDetectBaseBindings();
 			_job.Normalize();
+		}
+
+		private void OpenTemplateSettings()
+		{
+			if (_src == null)
+			{
+				MessageBox.Show("请先加载图片。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+				return;
+			}
+			PullCanvasRoisToJob();
+			SyncUiToJobGlobal();
+			using (TemplateSettingsForm templateSettingsForm = new TemplateSettingsForm(_src, _job))
+			{
+				if (templateSettingsForm.ShowDialog(this) != DialogResult.OK)
+				{
+					return;
+				}
+				EdgeInspectJob job = templateSettingsForm.Job;
+				if (job == null)
+				{
+					return;
+				}
+				_job = job.DeepClone();
+				_hasUnsavedChanges = true;
+				_suppressUiEvents = true;
+				_suppressRoiChanged = true;
+				try
+				{
+					LoadJobToUi(_job);
+					canvas.SetAllRois(_job.TemplateRoi, _job.BaseRois.Select((BaseRoiItem x) => x.Roi), _job.CircleBaseRois.Select(ToCanvasCirclePair), _job.CirclePointRois.Select((CirclePointRoiItem x) => x.Circle), _job.DetectItems.Select((DetectRoiItem x) => x.Roi));
+					canvas.ShowRois = true;
+					canvas.ShowRuntimeRois = false;
+					canvas.ClearRuntimeRois();
+				}
+				finally
+				{
+					_suppressUiEvents = false;
+					_suppressRoiChanged = false;
+				}
+				SelectInitialCanvasTarget();
+				RefreshBaseBindingCombo();
+				LoadSelectedDetectToUi();
+				LoadCurrentBaseCaliperToUi();
+				LoadCurrentDetectCaliperToUi();
+				ClearResultVisualsBecauseRoiChanged();
+				SetReady("READY", "模板设置已更新。");
+			}
 		}
 
 		private void SyncCurrentDetectUiToJob()
@@ -1044,16 +1133,16 @@ namespace EdgeAlignInspect
 			{
 				_job.CirclePointRois.RemoveAt(_job.CirclePointRois.Count - 1);
 			}
-			for (int p = 0; p < canvas.CirclePointRois.Count; p++)
+			for (int k = 0; k < canvas.CirclePointRois.Count; k++)
 			{
-				_job.CirclePointRois[p].Circle = canvas.CirclePointRois[p];
-				if (string.IsNullOrWhiteSpace(_job.CirclePointRois[p].Name))
+				_job.CirclePointRois[k].Circle = canvas.CirclePointRois[k];
+				if (string.IsNullOrWhiteSpace(_job.CirclePointRois[k].Name))
 				{
-					_job.CirclePointRois[p].Name = $"圆点基准{p + 1}";
+					_job.CirclePointRois[k].Name = $"圆点基准{k + 1}";
 				}
-				if (_job.CirclePointRois[p].Caliper == null)
+				if (_job.CirclePointRois[k].Caliper == null)
 				{
-					_job.CirclePointRois[p].Caliper = _job.CircleCaliper?.DeepClone() ?? EdgeInspectJob.CreateDefaultCircleCaliper();
+					_job.CirclePointRois[k].Caliper = _job.CircleCaliper?.DeepClone() ?? EdgeInspectJob.CreateDefaultCircleCaliper();
 				}
 			}
 			while (_job.DetectItems.Count < canvas.DetectRois.Count)
@@ -1070,18 +1159,18 @@ namespace EdgeAlignInspect
 			{
 				_job.DetectItems.RemoveAt(_job.DetectItems.Count - 1);
 			}
-			for (int k = 0; k < canvas.DetectRois.Count; k++)
+			for (int l = 0; l < canvas.DetectRois.Count; l++)
 			{
-				_job.DetectItems[k].Roi = canvas.DetectRois[k];
-				if (string.IsNullOrWhiteSpace(_job.DetectItems[k].Name))
+				_job.DetectItems[l].Roi = canvas.DetectRois[l];
+				if (string.IsNullOrWhiteSpace(_job.DetectItems[l].Name))
 				{
-					_job.DetectItems[k].Name = $"检测{k + 1}";
+					_job.DetectItems[l].Name = $"检测{l + 1}";
 				}
-				if (_job.DetectItems[k].Caliper == null)
+				if (_job.DetectItems[l].Caliper == null)
 				{
-					_job.DetectItems[k].Caliper = _job.DetectCaliper?.DeepClone() ?? EdgeInspectJob.CreateDefaultDetectCaliper();
+					_job.DetectItems[l].Caliper = _job.DetectCaliper?.DeepClone() ?? EdgeInspectJob.CreateDefaultDetectCaliper();
 				}
-				_job.NormalizeDetectBinding(_job.DetectItems[k]);
+				_job.NormalizeDetectBinding(_job.DetectItems[l]);
 			}
 			_job.Normalize();
 		}
@@ -1302,12 +1391,12 @@ namespace EdgeAlignInspect
 				_suppressUiEvents = true;
 				try
 				{
-					CaliperParameters caliperParameters = _job.CircleBaseRois[circleBaseCaliperEditorTargetIndex]?.Caliper ?? _job.CircleCaliper ?? EdgeInspectJob.CreateDefaultCircleCaliper();
-					cboBasePol.SelectedIndex = TransitionToPolIndex(caliperParameters.Transition);
-					numBaseMeasures.Value = ClampDecimal(caliperParameters.NumMeasures, numBaseMeasures);
-					numBaseSigma.Value = ClampDecimal((decimal)caliperParameters.Sigma, numBaseSigma);
-					numBaseTh.Value = ClampDecimal((decimal)caliperParameters.Threshold, numBaseTh);
-					numBaseOutward.Value = ClampDecimal((decimal)caliperParameters.SearchOutward, numBaseOutward);
+					CaliperParameters caliperParameters2 = _job.CircleBaseRois[circleBaseCaliperEditorTargetIndex]?.Caliper ?? _job.CircleCaliper ?? EdgeInspectJob.CreateDefaultCircleCaliper();
+					cboBasePol.SelectedIndex = TransitionToPolIndex(caliperParameters2.Transition);
+					numBaseMeasures.Value = ClampDecimal(caliperParameters2.NumMeasures, numBaseMeasures);
+					numBaseSigma.Value = ClampDecimal((decimal)caliperParameters2.Sigma, numBaseSigma);
+					numBaseTh.Value = ClampDecimal((decimal)caliperParameters2.Threshold, numBaseTh);
+					numBaseOutward.Value = ClampDecimal((decimal)caliperParameters2.SearchOutward, numBaseOutward);
 					return;
 				}
 				finally
@@ -1317,7 +1406,7 @@ namespace EdgeAlignInspect
 			}
 			int baseCaliperEditorTargetIndex = GetBaseCaliperEditorTargetIndex();
 			bool flag = baseCaliperEditorTargetIndex >= 0 && baseCaliperEditorTargetIndex < _job.BaseRois.Count;
-			SetBaseCaliperEditorEnabled(flag, circleOutwardEnabled: false);
+			SetBaseCaliperEditorEnabled(flag);
 			_suppressUiEvents = true;
 			try
 			{
@@ -1331,11 +1420,11 @@ namespace EdgeAlignInspect
 				}
 				else
 				{
-					CaliperParameters caliperParameters2 = _job.BaseRois[baseCaliperEditorTargetIndex]?.Caliper ?? _job.BaseCaliper ?? EdgeInspectJob.CreateDefaultBaseCaliper();
-					cboBasePol.SelectedIndex = TransitionToPolIndex(caliperParameters2.Transition);
-					numBaseMeasures.Value = ClampDecimal(caliperParameters2.NumMeasures, numBaseMeasures);
-					numBaseSigma.Value = ClampDecimal((decimal)caliperParameters2.Sigma, numBaseSigma);
-					numBaseTh.Value = ClampDecimal((decimal)caliperParameters2.Threshold, numBaseTh);
+					CaliperParameters caliperParameters3 = _job.BaseRois[baseCaliperEditorTargetIndex]?.Caliper ?? _job.BaseCaliper ?? EdgeInspectJob.CreateDefaultBaseCaliper();
+					cboBasePol.SelectedIndex = TransitionToPolIndex(caliperParameters3.Transition);
+					numBaseMeasures.Value = ClampDecimal(caliperParameters3.NumMeasures, numBaseMeasures);
+					numBaseSigma.Value = ClampDecimal((decimal)caliperParameters3.Sigma, numBaseSigma);
+					numBaseTh.Value = ClampDecimal((decimal)caliperParameters3.Threshold, numBaseTh);
 					numBaseOutward.Value = ClampDecimal(0m, numBaseOutward);
 				}
 			}
@@ -1383,49 +1472,49 @@ namespace EdgeAlignInspect
 			{
 				cboDetectBindBase.Items.Clear();
 				_baseBindingOptions.Clear();
-				for (int p = 0; p < _job.CirclePointRois.Count; p++)
+				for (int i = 0; i < _job.CirclePointRois.Count; i++)
 				{
-					string text3 = (string.IsNullOrWhiteSpace(_job.CirclePointRois[p]?.Name) ? $"圆点基准{p + 1}" : _job.CirclePointRois[p].Name);
+					string text = (string.IsNullOrWhiteSpace(_job.CirclePointRois[i]?.Name) ? $"圆点基准{i + 1}" : _job.CirclePointRois[i].Name);
 					_baseBindingOptions.Add(new BaseBindingOption
 					{
 						Kind = ReferenceBaseKind.CirclePoint,
-						Index = p,
-						Id = (_job.CirclePointRois[p]?.Id ?? ""),
-						Name = text3
+						Index = i,
+						Id = (_job.CirclePointRois[i]?.Id ?? ""),
+						Name = text
 					});
-					cboDetectBindBase.Items.Add("[圆点] " + text3);
+					cboDetectBindBase.Items.Add("[圆点] " + text);
 				}
-				for (int i = 0; i < _job.BaseRois.Count; i++)
+				for (int j = 0; j < _job.BaseRois.Count; j++)
 				{
 					if (!chkUseReferenceLine.Checked)
 					{
 						break;
 					}
-					string text = (string.IsNullOrWhiteSpace(_job.BaseRois[i]?.Name) ? $"基准{i + 1}" : _job.BaseRois[i].Name);
+					string text2 = (string.IsNullOrWhiteSpace(_job.BaseRois[j]?.Name) ? $"基准{j + 1}" : _job.BaseRois[j].Name);
 					_baseBindingOptions.Add(new BaseBindingOption
 					{
 						Kind = ReferenceBaseKind.LineRoi,
-						Index = i,
-						Id = (_job.BaseRois[i]?.Id ?? ""),
-						Name = text
+						Index = j,
+						Id = (_job.BaseRois[j]?.Id ?? ""),
+						Name = text2
 					});
-					cboDetectBindBase.Items.Add("[线] " + text);
+					cboDetectBindBase.Items.Add("[线] " + text2);
 				}
-				for (int j = 0; j < _job.CircleBaseRois.Count; j++)
+				for (int k = 0; k < _job.CircleBaseRois.Count; k++)
 				{
 					if (!chkUseReferenceLine.Checked)
 					{
 						break;
 					}
-					string text2 = (string.IsNullOrWhiteSpace(_job.CircleBaseRois[j]?.Name) ? $"圆基准{j + 1}" : _job.CircleBaseRois[j].Name);
+					string text3 = (string.IsNullOrWhiteSpace(_job.CircleBaseRois[k]?.Name) ? $"圆基准{k + 1}" : _job.CircleBaseRois[k].Name);
 					_baseBindingOptions.Add(new BaseBindingOption
 					{
 						Kind = ReferenceBaseKind.CirclePair,
-						Index = j,
-						Id = (_job.CircleBaseRois[j]?.Id ?? ""),
-						Name = text2
+						Index = k,
+						Id = (_job.CircleBaseRois[k]?.Id ?? ""),
+						Name = text3
 					});
-					cboDetectBindBase.Items.Add("[圆] " + text2);
+					cboDetectBindBase.Items.Add("[圆] " + text3);
 				}
 				if (cboDetectBindBase.Items.Count == 0)
 				{
@@ -1500,7 +1589,7 @@ namespace EdgeAlignInspect
 			if (currentDetectIndex >= 0 && currentDetectIndex < _job.DetectItems.Count)
 			{
 				DetectRoiItem detectRoiItem = _job.DetectItems[currentDetectIndex];
-			if (detectRoiItem != null && detectRoiItem.UseReferenceLine)
+				if (detectRoiItem != null && detectRoiItem.UseReferenceLine)
 				{
 					int num = ResolveDetectBoundBaseIndex(detectRoiItem);
 					if (num >= 0 && num < _job.BaseRois.Count)
@@ -1514,25 +1603,25 @@ namespace EdgeAlignInspect
 
 		private double GetDisplayResolutionMm()
 		{
-			double x = _job?.PixelResolutionX ?? 1.0;
-			double y = _job?.PixelResolutionY ?? 1.0;
-			if (x <= 0.0 && y > 0.0)
+			double num = _job?.PixelResolutionX ?? 1.0;
+			double num2 = _job?.PixelResolutionY ?? 1.0;
+			if (num <= 0.0 && num2 > 0.0)
 			{
-				x = y;
+				num = num2;
 			}
-			if (y <= 0.0 && x > 0.0)
+			if (num2 <= 0.0 && num > 0.0)
 			{
-				y = x;
+				num2 = num;
 			}
-			if (x <= 0.0)
+			if (num <= 0.0)
 			{
-				x = 1.0;
+				num = 1.0;
 			}
-			if (y <= 0.0)
+			if (num2 <= 0.0)
 			{
-				y = 1.0;
+				num2 = 1.0;
 			}
-			return (x + y) * 0.5;
+			return (num + num2) * 0.5;
 		}
 
 		private double PxToMm(double px)
@@ -1542,8 +1631,8 @@ namespace EdgeAlignInspect
 
 		private double MmToPx(double mm)
 		{
-			double resolution = GetDisplayResolutionMm();
-			return resolution > 0.0 ? mm / resolution : mm;
+			double displayResolutionMm = GetDisplayResolutionMm();
+			return (displayResolutionMm > 0.0) ? (mm / displayResolutionMm) : mm;
 		}
 
 		private int GetCurrentCirclePointIndex()
@@ -1701,6 +1790,7 @@ namespace EdgeAlignInspect
 
 		private void ClearResultVisualsBecauseRoiChanged()
 		{
+			_hasUnsavedChanges = true;
 			if (_resultValid)
 			{
 				_resultValid = false;
@@ -1717,6 +1807,36 @@ namespace EdgeAlignInspect
 				lblResultTip.Text = "运行前会自动按当前 ROI 和参数重新生成本次检测配置";
 				FixMultiLineLabel(lblSummary, 10);
 				FixMultiLineLabel(lblResultTip, 10);
+			}
+		}
+
+		private bool ConfirmSaveBeforeClose()
+		{
+			if (!_hasUnsavedChanges)
+			{
+				return true;
+			}
+			DialogResult result = MessageBox.Show(this, "参数已修改，是否保存后再关闭？", "保存参数", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+			if (result == DialogResult.Cancel)
+			{
+				return false;
+			}
+			if (result == DialogResult.No)
+			{
+				return true;
+			}
+			try
+			{
+				_savedJob = BuildJobForReturn();
+				_job = _savedJob.DeepClone();
+				ReturnedJob = _savedJob.DeepClone();
+				_hasUnsavedChanges = false;
+				return true;
+			}
+			catch (Exception ex)
+			{
+				MessageBox.Show(this, ex.Message, "保存失败", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+				return false;
 			}
 		}
 
@@ -2003,15 +2123,15 @@ namespace EdgeAlignInspect
 		{
 			int num = _src.Width;
 			int num2 = _src.Height;
-			float radius = Math.Max(8f, (float)Math.Min(num, num2) * 0.045f);
-			int num3 = 4;
-			int num4 = index / num3;
-			int num5 = index % num3;
-			float x = (float)num * (0.18f + (float)num5 * 0.14f);
-			float y = (float)num2 * (0.28f + (float)num4 * 0.14f);
-			x = Math.Max(radius + 4f, Math.Min((float)num - radius - 4f, x));
-			y = Math.Max(radius + 4f, Math.Min((float)num2 - radius - 4f, y));
-			return new CircleRoiF(new PointF(x, y), radius);
+			float num3 = Math.Max(8f, (float)Math.Min(num, num2) * 0.045f);
+			int num4 = 4;
+			int num5 = index / num4;
+			int num6 = index % num4;
+			float val = (float)num * (0.18f + (float)num6 * 0.14f);
+			float val2 = (float)num2 * (0.28f + (float)num5 * 0.14f);
+			val = Math.Max(num3 + 4f, Math.Min((float)num - num3 - 4f, val));
+			val2 = Math.Max(num3 + 4f, Math.Min((float)num2 - num3 - 4f, val2));
+			return new CircleRoiF(new PointF(val, val2), num3);
 		}
 
 		private void ApplyAutoCaliperGeometry(EdgeInspectJob job)
@@ -2036,21 +2156,21 @@ namespace EdgeAlignInspect
 				}
 				AutoFillCircleCaliperFromCircleRoi(item2.Circle1, item2.Caliper);
 			}
-			foreach (CirclePointRoiItem item4 in job.CirclePointRois.Where((CirclePointRoiItem x) => x != null && !x.Circle.IsEmpty))
-			{
-				if (item4.Caliper == null)
-				{
-					item4.Caliper = job.CircleCaliper?.DeepClone() ?? EdgeInspectJob.CreateDefaultCircleCaliper();
-				}
-				AutoFillCircleCaliperFromCircleRoi(item4.Circle, item4.Caliper);
-			}
-			foreach (DetectRoiItem item3 in job.DetectItems.Where((DetectRoiItem x) => x != null && x.Enabled && !x.Roi.IsEmpty))
+			foreach (CirclePointRoiItem item3 in job.CirclePointRois.Where((CirclePointRoiItem x) => x != null && !x.Circle.IsEmpty))
 			{
 				if (item3.Caliper == null)
 				{
-					item3.Caliper = job.DetectCaliper?.DeepClone() ?? EdgeInspectJob.CreateDefaultDetectCaliper();
+					item3.Caliper = job.CircleCaliper?.DeepClone() ?? EdgeInspectJob.CreateDefaultCircleCaliper();
 				}
-				AutoFillCaliperFromRotRoi(item3.Roi, item3.Caliper);
+				AutoFillCircleCaliperFromCircleRoi(item3.Circle, item3.Caliper);
+			}
+			foreach (DetectRoiItem item4 in job.DetectItems.Where((DetectRoiItem x) => x != null && x.Enabled && !x.Roi.IsEmpty))
+			{
+				if (item4.Caliper == null)
+				{
+					item4.Caliper = job.DetectCaliper?.DeepClone() ?? EdgeInspectJob.CreateDefaultDetectCaliper();
+				}
+				AutoFillCaliperFromRotRoi(item4.Roi, item4.Caliper);
 			}
 			BaseRoiItem baseRoiItem = job.BaseRois.FirstOrDefault((BaseRoiItem x) => x != null && !x.Roi.IsEmpty);
 			if (baseRoiItem?.Caliper != null)
@@ -2278,7 +2398,7 @@ namespace EdgeAlignInspect
 			list2.Add($"失败ROI: {num}    毛刺: {r.BurrCount}    凹陷: {r.DentCount}    超边: {r.OverEdgeCount}    漏铜: {r.CopperLeakCount}");
 			list2.Add($"局部Δ 最小/最大/平均: {r.DeltaMin:F2} / {r.DeltaMax:F2} / {r.DeltaMean:F2}");
 			List<string> list3 = list2;
-			foreach (DetectRoiInspectResult item in r.DetectResults.Take(8))
+			foreach (DetectRoiInspectResult item in r.DetectResults)
 			{
 				string arg = (double.IsNaN(item.AngleDeltaDeg) ? "N/A" : $"{item.AngleDeltaDeg:F3}°");
 				if (item.Success)
@@ -2300,6 +2420,7 @@ namespace EdgeAlignInspect
 			canvas.HudTextColor = (r.Success ? Color.Lime : Color.Red);
 			canvas.HudText = string.Join("\n", list3);
 			canvas.ClearOverlays();
+			DrawTemplateMatchOverlay(r);
 			if (flag)
 			{
 				for (int num2 = 0; num2 < r.BaseResults.Count; num2++)
@@ -2437,7 +2558,14 @@ namespace EdgeAlignInspect
 					string label = null;
 					if (flag3)
 					{
-						label = ((num8 != num4) ? ((num8 != num5) ? $"实测={edgePointResult.SignedDistanceValue:+0.0000;-0.0000;0.0000}mm Δ={edgePointResult.DeltaValue:+0.0000;-0.0000;0.0000}mm" : $"{detectResult.Name} MIN Δ={edgePointResult.DeltaValue:+0.0000;-0.0000;0.0000}mm") : $"{detectResult.Name} MAX Δ={edgePointResult.DeltaValue:+0.0000;-0.0000;0.0000}mm");
+						if (detectResult.UseReferenceLine)
+						{
+							label = ((num8 == num4) ? $"{detectResult.Name} MAX 差值={edgePointResult.DeltaValue:+0.0000;-0.0000;0.0000}mm" : ((num8 != num5) ? $"距离={edgePointResult.SignedDistanceValue:0.0000}mm 差值={edgePointResult.DeltaValue:+0.0000;-0.0000;0.0000}mm" : $"{detectResult.Name} MIN 差值={edgePointResult.DeltaValue:+0.0000;-0.0000;0.0000}mm"));
+						}
+						else
+						{
+							label = ((num8 == num4) ? $"{detectResult.Name} MAX Δ={edgePointResult.DeltaValue:+0.0000;-0.0000;0.0000}mm" : ((num8 != num5) ? $"实测={edgePointResult.SignedDistanceValue:+0.0000;-0.0000;0.0000}mm Δ={edgePointResult.DeltaValue:+0.0000;-0.0000;0.0000}mm" : $"{detectResult.Name} MIN Δ={edgePointResult.DeltaValue:+0.0000;-0.0000;0.0000}mm"));
+						}
 					}
 					canvas.OverlayPoints.Add(new SolidPoint
 					{
@@ -2452,12 +2580,10 @@ namespace EdgeAlignInspect
 					if (detectResult.HasOverallDistance)
 					{
 						DrawOverallDistance(detectResult);
+						continue;
 					}
-					else
-					{
-						DrawPerpForIndex(detectResult, num4, "MAX", Color.Magenta, detectResult.JudgeLine.P1, detectResult.JudgeLine.P2);
-						DrawPerpForIndex(detectResult, num5, "MIN", Color.Orange, detectResult.JudgeLine.P1, detectResult.JudgeLine.P2);
-					}
+					DrawPerpForIndex(detectResult, num4, "MAX", Color.Magenta, detectResult.JudgeLine.P1, detectResult.JudgeLine.P2);
+					DrawPerpForIndex(detectResult, num5, "MIN", Color.Orange, detectResult.JudgeLine.P1, detectResult.JudgeLine.P2);
 				}
 			}
 			canvas.Invalidate();
@@ -2465,34 +2591,33 @@ namespace EdgeAlignInspect
 
 		private void DrawOverallDistance(DetectRoiInspectResult dr)
 		{
-			if (dr == null || !dr.HasOverallDistance)
+			if (dr != null && dr.HasOverallDistance)
 			{
-				return;
+				PointF overallMeasurePoint = dr.OverallMeasurePoint;
+				PointF overallFootPoint = dr.OverallFootPoint;
+				canvas.OverlayPoints.Add(new SolidPoint
+				{
+					Center = overallMeasurePoint,
+					Radius = 5f,
+					Color = Color.DeepSkyBlue,
+					Label = dr.Name + " 整体测量点"
+				});
+				canvas.OverlayLines.Add(new ColoredPolyline
+				{
+					Color = Color.DeepSkyBlue,
+					Width = 2f,
+					Arrow = false,
+					Points = new List<PointF> { overallMeasurePoint, overallFootPoint }
+				});
+				PointF center = new PointF((overallMeasurePoint.X + overallFootPoint.X) * 0.5f, (overallMeasurePoint.Y + overallFootPoint.Y) * 0.5f);
+				canvas.OverlayPoints.Add(new SolidPoint
+				{
+					Center = center,
+					Radius = 0f,
+					Color = Color.DeepSkyBlue,
+					Label = $"{dr.Name} 整体={dr.OverallDistanceValue:0.0000}mm Δ={dr.OverallDeltaValue:+0.0000;-0.0000;0.0000}mm"
+				});
 			}
-			PointF point = dr.OverallMeasurePoint;
-			PointF foot = dr.OverallFootPoint;
-			canvas.OverlayPoints.Add(new SolidPoint
-			{
-				Center = point,
-				Radius = 5f,
-				Color = Color.DeepSkyBlue,
-				Label = $"{dr.Name} 整体测量点"
-			});
-			canvas.OverlayLines.Add(new ColoredPolyline
-			{
-				Color = Color.DeepSkyBlue,
-				Width = 2f,
-				Arrow = false,
-				Points = new List<PointF> { point, foot }
-			});
-			PointF center = new PointF((point.X + foot.X) * 0.5f, (point.Y + foot.Y) * 0.5f);
-			canvas.OverlayPoints.Add(new SolidPoint
-			{
-				Center = center,
-				Radius = 0f,
-				Color = Color.DeepSkyBlue,
-				Label = $"{dr.Name} 整体={dr.OverallDistanceValue:0.0000}mm Δ={dr.OverallDeltaValue:+0.0000;-0.0000;0.0000}mm"
-			});
 		}
 
 		private void DrawPerpForIndex(DetectRoiInspectResult dr, int idx, string tag, Color lineColor, PointF a, PointF b)
@@ -2509,14 +2634,15 @@ namespace EdgeAlignInspect
 					Arrow = false,
 					Points = new List<PointF> { point, item }
 				});
-				double signedDistanceValue = edgePointResult.SignedDistanceValue;
 				PointF center = new PointF((point.X + item.X) * 0.5f, (point.Y + item.Y) * 0.5f);
 				canvas.OverlayPoints.Add(new SolidPoint
 				{
 					Center = center,
 					Radius = 0f,
 					Color = lineColor,
-					Label = $"{dr.Name} {tag} {signedDistanceValue:0.0000}mm"
+					Label = dr.UseReferenceLine
+						? $"{dr.Name} {tag} 差值={edgePointResult.DeltaValue:+0.0000;-0.0000;0.0000}mm"
+						: $"{dr.Name} {tag} {edgePointResult.SignedDistanceValue:0.0000}mm"
 				});
 			}
 		}
@@ -2546,6 +2672,79 @@ namespace EdgeAlignInspect
 					Label = label
 				});
 			}
+		}
+
+		private void DrawTemplateMatchOverlay(EdgeInspectResult r)
+		{
+			if (r == null || !r.TemplateMatchEnabled || !r.TemplateMatchOk)
+			{
+				return;
+			}
+			Color contourColor = Color.FromArgb(255, 80, 220, 255);
+			List<PointF> segment = new List<PointF>();
+			Action flushSegment = delegate
+			{
+				if (segment.Count >= 2)
+				{
+					canvas.OverlayLines.Add(new ColoredPolyline
+					{
+						Points = new List<PointF>(segment),
+						Color = contourColor,
+						Width = 1.8f,
+						Arrow = false
+					});
+				}
+				segment.Clear();
+			};
+			foreach (PointF pt in r.TemplateMatchContourPoints)
+			{
+				if (IsContourSeparator(pt))
+				{
+					flushSegment();
+				}
+				else
+				{
+					segment.Add(pt);
+				}
+			}
+			flushSegment();
+
+			PointF center = r.TemplateMatchCenter;
+			const float cross = 14f;
+			canvas.OverlayLines.Add(new ColoredPolyline
+			{
+				Points = new List<PointF>
+				{
+					new PointF(center.X - cross, center.Y),
+					new PointF(center.X + cross, center.Y)
+				},
+				Color = Color.Magenta,
+				Width = 2.2f,
+				Arrow = false
+			});
+			canvas.OverlayLines.Add(new ColoredPolyline
+			{
+				Points = new List<PointF>
+				{
+					new PointF(center.X, center.Y - cross),
+					new PointF(center.X, center.Y + cross)
+				},
+				Color = Color.Magenta,
+				Width = 2.2f,
+				Arrow = false
+			});
+			canvas.OverlayPoints.Add(new SolidPoint
+			{
+				Center = center,
+				Radius = 4.5f,
+				Color = Color.Magenta,
+				Label = $"模板中心 score={r.TemplateMatchScore:0.000}"
+			});
+		}
+
+		private static bool IsContourSeparator(PointF p)
+		{
+			return float.IsNaN(p.X) || float.IsNaN(p.Y);
 		}
 
 		private void SetReady(string status, string msg)
@@ -2725,6 +2924,7 @@ namespace EdgeAlignInspect
 				ReturnedJob = BuildJobForReturn();
 				_job = ReturnedJob.DeepClone();
 				_savedJob = ReturnedJob.DeepClone();
+				_hasUnsavedChanges = false;
 				base.DialogResult = DialogResult.OK;
 				Close();
 			}
@@ -2756,6 +2956,7 @@ namespace EdgeAlignInspect
 			this.btnAddCirclePointRoi = new System.Windows.Forms.Button();
 			this.btnAddDetectRoi = new System.Windows.Forms.Button();
 			this.btnDeleteRoi = new System.Windows.Forms.Button();
+			this.btnTemplateSettings = new System.Windows.Forms.Button();
 			this.btnSaveTeach = new System.Windows.Forms.Button();
 			this.btnRun = new System.Windows.Forms.Button();
 			this.btnConfirm = new System.Windows.Forms.Button();
@@ -2830,6 +3031,7 @@ namespace EdgeAlignInspect
 			this.grpOps.Font = new System.Drawing.Font("微软雅黑", 9f, System.Drawing.FontStyle.Bold);
 			this.grpOps.SetBounds(8, 8, 476, 164);
 			this.grpOps.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
+			EdgeAlignInspect.Form1.SetupButton(this.btnTemplateSettings, "模板设置", 244, 24, 124, 30, false);
 			EdgeAlignInspect.Form1.SetupButton(this.btnLoad, "加载图片", 14, 24, 96, 30, false);
 			EdgeAlignInspect.Form1.SetupButton(this.btnDeleteRoi, "删除选中ROI", 118, 24, 118, 30, false);
 			EdgeAlignInspect.Form1.SetupButton(this.btnRun, "运行", 376, 24, 96, 30, true);
@@ -2847,6 +3049,7 @@ namespace EdgeAlignInspect
 			this.lblRoiHint.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
 			this.grpOps.Controls.Add(this.btnLoad);
 			this.grpOps.Controls.Add(this.btnDeleteRoi);
+			this.grpOps.Controls.Add(this.btnTemplateSettings);
 			this.grpOps.Controls.Add(this.btnRun);
 			this.grpOps.Controls.Add(this.btnAddBaseRoi);
 			this.grpOps.Controls.Add(this.btnAddCircleBaseRoi);

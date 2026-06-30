@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -7,7 +7,7 @@ using System.Windows.Forms;
 
 namespace EdgeAlignInspect
 {
-	public sealed class HalconCanvas : Control
+	public sealed class  HalconCanvas : Control
 	{
 		private enum EditMode
 		{
@@ -57,6 +57,8 @@ namespace EdgeAlignInspect
 
 		private bool _showRois = true;
 
+		private bool _showTemplateRoi = true;
+
 		private bool _showRuntimeRois = false;
 
 		private EditMode _edit = EditMode.None;
@@ -89,6 +91,14 @@ namespace EdgeAlignInspect
 
 		public bool AutoClearOverlaysOnRoiEdit { get; set; } = true;
 
+		public bool AllowRoiEditing { get; set; } = true;
+
+		public event Action<PointF, MouseButtons> ImageMouseDown;
+
+		public event Action<PointF, MouseButtons> ImageMouseMove;
+
+		public event Action<PointF, MouseButtons> ImageMouseUp;
+
 		public bool ShowRois
 		{
 			get
@@ -100,6 +110,26 @@ namespace EdgeAlignInspect
 				if (_showRois != value)
 				{
 					_showRois = value;
+					Invalidate();
+				}
+			}
+		}
+
+		public bool ShowTemplateRoi
+		{
+			get
+			{
+				return _showTemplateRoi;
+			}
+			set
+			{
+				if (_showTemplateRoi != value)
+				{
+					_showTemplateRoi = value;
+					if (!_showTemplateRoi && SelectedRoi.Kind == CanvasRoiKind.Template)
+					{
+						SetSelection(CanvasRoiKind.None, -1);
+					}
 					Invalidate();
 				}
 			}
@@ -151,6 +181,7 @@ namespace EdgeAlignInspect
 		{
 			SetStyle(ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
 			BackColor = Color.Black;
+			TabStop = true;
 			base.MouseWheel += delegate(object s, MouseEventArgs e)
 			{
 				if (_bmp != null)
@@ -164,6 +195,47 @@ namespace EdgeAlignInspect
 					Invalidate();
 				}
 			};
+		}
+
+		protected override bool IsInputKey(Keys keyData)
+		{
+			Keys keyCode = keyData & Keys.KeyCode;
+			if (keyCode == Keys.Left || keyCode == Keys.Right || keyCode == Keys.Up || keyCode == Keys.Down)
+			{
+				return true;
+			}
+			return base.IsInputKey(keyData);
+		}
+
+		protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+		{
+			Keys keyCode = keyData & Keys.KeyCode;
+			if (keyCode == Keys.Left || keyCode == Keys.Right || keyCode == Keys.Up || keyCode == Keys.Down)
+			{
+				float step = ((keyData & Keys.Shift) == Keys.Shift) ? 10f : 1f;
+				float dx = 0f;
+				float dy = 0f;
+				switch (keyCode)
+				{
+				case Keys.Left:
+					dx = 0f - step;
+					break;
+				case Keys.Right:
+					dx = step;
+					break;
+				case Keys.Up:
+					dy = 0f - step;
+					break;
+				case Keys.Down:
+					dy = step;
+					break;
+				}
+				if (MoveSelectedRoiBy(dx, dy))
+				{
+					return true;
+				}
+			}
+			return base.ProcessCmdKey(ref msg, keyData);
 		}
 
 		private void PrepareForEditRoiDisplay()
@@ -448,7 +520,7 @@ namespace EdgeAlignInspect
 			switch (kind)
 			{
 			case CanvasRoiKind.Template:
-				selectedRoi = (TemplateRoi.IsEmpty ? CanvasRoiSelection.None : new CanvasRoiSelection
+				selectedRoi = (TemplateRoi.IsEmpty || !ShowTemplateRoi ? CanvasRoiSelection.None : new CanvasRoiSelection
 				{
 					Kind = CanvasRoiKind.Template,
 					Index = 0
@@ -585,6 +657,17 @@ namespace EdgeAlignInspect
 			return new PointF(((float)p.X - _pan.X) / _zoom, ((float)p.Y - _pan.Y) / _zoom);
 		}
 
+		public bool TryScreenToImage(Point p, out PointF imagePoint)
+		{
+			if (_bmp == null)
+			{
+				imagePoint = default(PointF);
+				return false;
+			}
+			imagePoint = ScreenToImage(p);
+			return true;
+		}
+
 		private PointF ImageToScreen(PointF p)
 		{
 			return new PointF(p.X * _zoom + _pan.X, p.Y * _zoom + _pan.Y);
@@ -625,23 +708,23 @@ namespace EdgeAlignInspect
 				{
 					DrawRoi(graphics, _detectRois[k], $"检测{k + 1}", Color.Lime, SelectedRoi.Kind == CanvasRoiKind.Detect && SelectedRoi.Index == k, drawArrow: true, dashed: false, SelectedRoi.Kind == CanvasRoiKind.Detect && SelectedRoi.Index == k);
 				}
-				for (int p = 0; p < _circlePointRois.Count; p++)
+				for (int l = 0; l < _circlePointRois.Count; l++)
 				{
-					DrawCircleRoi(graphics, _circlePointRois[p], $"圆点基准{p + 1}", Color.DeepSkyBlue, SelectedRoi.Kind == CanvasRoiKind.CirclePoint && SelectedRoi.Index == p, SelectedRoi.Kind == CanvasRoiKind.CirclePoint && SelectedRoi.Index == p);
+					DrawCircleRoi(graphics, _circlePointRois[l], $"圆点基准{l + 1}", Color.DeepSkyBlue, SelectedRoi.Kind == CanvasRoiKind.CirclePoint && SelectedRoi.Index == l, SelectedRoi.Kind == CanvasRoiKind.CirclePoint && SelectedRoi.Index == l);
 				}
 			}
 			if (ShowRuntimeRois)
 			{
 				DrawRoi(graphics, RuntimeTemplateRoi, "模板(运行)", Color.FromArgb(230, 255, 120, 120), selected: false, drawArrow: false, dashed: true, showHandles: false);
-				for (int l = 0; l < _runtimeBaseRois.Count; l++)
+				for (int m = 0; m < _runtimeBaseRois.Count; m++)
 				{
-					DrawRoi(graphics, _runtimeBaseRois[l], $"基准{l + 1}(运行)", (l == 0) ? Color.FromArgb(230, 0, 255, 255) : Color.FromArgb(230, 255, 180, 0), selected: false, drawArrow: true, dashed: true, showHandles: false);
+					DrawRoi(graphics, _runtimeBaseRois[m], $"基准{m + 1}(运行)", (m == 0) ? Color.FromArgb(230, 0, 255, 255) : Color.FromArgb(230, 255, 180, 0), selected: false, drawArrow: true, dashed: true, showHandles: false);
 				}
-				for (int m = 0; m < _runtimeCircleBaseRois.Count; m++)
+				for (int n = 0; n < _runtimeCircleBaseRois.Count; n++)
 				{
-					CircleBaseRoiPair circleBaseRoiPair2 = _runtimeCircleBaseRois[m];
-					DrawCircleRoi(graphics, circleBaseRoiPair2.Circle1, $"圆基准{m + 1}-1(运行)", Color.FromArgb(230, 0, 255, 255), selected: false, showHandles: false);
-					DrawCircleRoi(graphics, circleBaseRoiPair2.Circle2, $"圆基准{m + 1}-2(运行)", Color.FromArgb(230, 0, 255, 255), selected: false, showHandles: false);
+					CircleBaseRoiPair circleBaseRoiPair2 = _runtimeCircleBaseRois[n];
+					DrawCircleRoi(graphics, circleBaseRoiPair2.Circle1, $"圆基准{n + 1}-1(运行)", Color.FromArgb(230, 0, 255, 255), selected: false, showHandles: false);
+					DrawCircleRoi(graphics, circleBaseRoiPair2.Circle2, $"圆基准{n + 1}-2(运行)", Color.FromArgb(230, 0, 255, 255), selected: false, showHandles: false);
 					if (!circleBaseRoiPair2.Circle1.IsEmpty && !circleBaseRoiPair2.Circle2.IsEmpty)
 					{
 						using (Pen pen2 = new Pen(Color.FromArgb(230, 0, 255, 255), 2f))
@@ -651,13 +734,13 @@ namespace EdgeAlignInspect
 						}
 					}
 				}
-				for (int n = 0; n < _runtimeDetectRois.Count; n++)
+				for (int num = 0; num < _runtimeDetectRois.Count; num++)
 				{
-					DrawRoi(graphics, _runtimeDetectRois[n], $"检测{n + 1}(运行)", Color.FromArgb(230, 255, 0, 255), selected: false, drawArrow: true, dashed: true, showHandles: false);
+					DrawRoi(graphics, _runtimeDetectRois[num], $"检测{num + 1}(运行)", Color.FromArgb(230, 255, 0, 255), selected: false, drawArrow: true, dashed: true, showHandles: false);
 				}
-				for (int p2 = 0; p2 < _runtimeCirclePointRois.Count; p2++)
+				for (int num2 = 0; num2 < _runtimeCirclePointRois.Count; num2++)
 				{
-					DrawCircleRoi(graphics, _runtimeCirclePointRois[p2], $"圆点基准{p2 + 1}(运行)", Color.FromArgb(230, 0, 190, 255), selected: false, showHandles: false);
+					DrawCircleRoi(graphics, _runtimeCirclePointRois[num2], $"圆点基准{num2 + 1}(运行)", Color.FromArgb(230, 0, 190, 255), selected: false, showHandles: false);
 				}
 			}
 			foreach (ColoredPolyline overlayLine in OverlayLines)
@@ -679,14 +762,15 @@ namespace EdgeAlignInspect
 			foreach (SolidPoint overlayPoint in OverlayPoints)
 			{
 				PointF pointF = ImageToScreen(overlayPoint.Center);
-				float num = Math.Max(2f, overlayPoint.Radius);
+				float num3 = Math.Max(2f, overlayPoint.Radius);
 				using (SolidBrush brush = new SolidBrush(overlayPoint.Color))
 				{
-					graphics.FillEllipse(brush, pointF.X - num, pointF.Y - num, num * 2f, num * 2f);
+					graphics.FillEllipse(brush, pointF.X - num3, pointF.Y - num3, num3 * 2f, num3 * 2f);
 				}
 				if (!string.IsNullOrEmpty(overlayPoint.Label))
 				{
-					TextRenderer.DrawText(pt: new Point((int)(pointF.X + 6f), (int)(pointF.Y + 6f)), dc: graphics, text: overlayPoint.Label, font: Font, foreColor: overlayPoint.Color);
+					Point pt = new Point((int)(pointF.X + 6f), (int)(pointF.Y + 6f));
+					TextRenderer.DrawText(graphics, overlayPoint.Label, Font, pt, overlayPoint.Color);
 				}
 			}
 			if (!string.IsNullOrWhiteSpace(HudText))
@@ -702,7 +786,8 @@ namespace EdgeAlignInspect
 			int num2 = 0;
 			int num3 = 0;
 			string[] array2 = array;
-			foreach (string text2 in array2)
+			string[] array3 = array2;
+			foreach (string text2 in array3)
 			{
 				Size size = TextRenderer.MeasureText(text2, Font);
 				num2 = Math.Max(num2, size.Width);
@@ -714,8 +799,9 @@ namespace EdgeAlignInspect
 				g.FillRectangle(brush, rect);
 			}
 			int num4 = y + num;
-			string[] array3 = array;
-			foreach (string text3 in array3)
+			string[] array4 = array;
+			string[] array5 = array4;
+			foreach (string text3 in array5)
 			{
 				TextRenderer.DrawText(g, text3, Font, new Point(x + num, num4), color);
 				num4 += TextRenderer.MeasureText(text3, Font).Height;
@@ -725,6 +811,10 @@ namespace EdgeAlignInspect
 		private void DrawRoi(Graphics g, RotRectF roi, string label, Color color, bool selected, bool drawArrow, bool dashed, bool showHandles)
 		{
 			if (roi.IsEmpty)
+			{
+				return;
+			}
+			if (!ShowTemplateRoi && !drawArrow && IsTemplateRoiColor(color, dashed))
 			{
 				return;
 			}
@@ -757,6 +847,12 @@ namespace EdgeAlignInspect
 				}
 				g.DrawEllipse(Pens.Black, rotateHandleScreen);
 			}
+		}
+
+		private static bool IsTemplateRoiColor(Color color, bool dashed)
+		{
+			return (!dashed && color.ToArgb() == Color.Red.ToArgb()) ||
+				(dashed && color.ToArgb() == Color.FromArgb(230, 255, 120, 120).ToArgb());
 		}
 
 		private void DrawEdgeHandle(Graphics g, Rectangle rc)
@@ -822,6 +918,12 @@ namespace EdgeAlignInspect
 			{
 				return;
 			}
+			PointF pt = ScreenToImage(e.Location);
+			this.ImageMouseDown?.Invoke(pt, e.Button);
+			if (!AllowRoiEditing)
+			{
+				return;
+			}
 			if (e.Button == MouseButtons.Middle)
 			{
 				_panning = true;
@@ -872,7 +974,7 @@ namespace EdgeAlignInspect
 						return;
 					}
 				}
-				if (!HitSelectRoi(CanvasRoiKind.Template, 0, TemplateRoi, e.Location))
+				if (!ShowTemplateRoi || !HitSelectRoi(CanvasRoiKind.Template, 0, TemplateRoi, e.Location))
 				{
 					SetSelection(CanvasRoiKind.None, -1);
 					_edit = EditMode.None;
@@ -890,11 +992,11 @@ namespace EdgeAlignInspect
 			CanvasRoiSelection selectedRoi = SelectedRoi;
 			if (selectedRoi.Kind == CanvasRoiKind.CircleBase1 || selectedRoi.Kind == CanvasRoiKind.CircleBase2 || selectedRoi.Kind == CanvasRoiKind.CirclePoint)
 			{
-				CircleRoiF circle = GetCircleBySelection(selectedRoi);
-				return HitSelectCircleRoi(selectedRoi.Kind, selectedRoi.Index, circle, mouse);
+				CircleRoiF circleBySelection = GetCircleBySelection(selectedRoi);
+				return HitSelectCircleRoi(selectedRoi.Kind, selectedRoi.Index, circleBySelection, mouse);
 			}
-			RotRectF roi = GetRoiBySelection(selectedRoi);
-			return HitSelectRoi(selectedRoi.Kind, selectedRoi.Index, roi, mouse);
+			RotRectF roiBySelection = GetRoiBySelection(selectedRoi);
+			return HitSelectRoi(selectedRoi.Kind, selectedRoi.Index, roiBySelection, mouse);
 		}
 
 		private bool HitSelectRoi(CanvasRoiKind kind, int index, RotRectF roi, Point mouse)
@@ -982,6 +1084,8 @@ namespace EdgeAlignInspect
 			{
 				return;
 			}
+			PointF pt = ScreenToImage(e.Location);
+			this.ImageMouseMove?.Invoke(pt, e.Button);
 			if (_panning)
 			{
 				_pan.X += e.X - _lastMouse.X;
@@ -1066,6 +1170,11 @@ namespace EdgeAlignInspect
 
 		protected override void OnMouseUp(MouseEventArgs e)
 		{
+			if (_bmp != null)
+			{
+				PointF pt = ScreenToImage(e.Location);
+				this.ImageMouseUp?.Invoke(pt, e.Button);
+			}
 			if (_panning)
 			{
 				_panning = false;
@@ -1242,6 +1351,60 @@ namespace EdgeAlignInspect
 			return rr;
 		}
 
+		private bool MoveSelectedRoiBy(float dx, float dy)
+		{
+			if (!AllowRoiEditing || !ShowRois || !SelectedRoi.IsValid || _edit != EditMode.None)
+			{
+				return false;
+			}
+			if (dx == 0f && dy == 0f)
+			{
+				return false;
+			}
+			if (AutoClearOverlaysOnRoiEdit && (OverlayLines.Count > 0 || OverlayPoints.Count > 0 || !string.IsNullOrEmpty(HudText)))
+			{
+				ClearOverlays();
+				ClearHud();
+			}
+			if (SelectedRoi.Kind == CanvasRoiKind.CircleBase1 || SelectedRoi.Kind == CanvasRoiKind.CircleBase2 || SelectedRoi.Kind == CanvasRoiKind.CirclePoint)
+			{
+				CircleRoiF circle = GetCircleBySelection(SelectedRoi);
+				if (circle.IsEmpty)
+				{
+					return false;
+				}
+				CircleRoiF movedCircle = circle;
+				movedCircle.Cx += dx;
+				movedCircle.Cy += dy;
+				movedCircle = ClampCircleToImage(movedCircle);
+				if (CircleApproximatelyEquals(circle, movedCircle))
+				{
+					return false;
+				}
+				SetCircleBySelection(SelectedRoi, movedCircle);
+				this.RoiChanged?.Invoke();
+				Invalidate();
+				return true;
+			}
+			RotRectF roi = GetRoiBySelection(SelectedRoi);
+			if (roi.IsEmpty)
+			{
+				return false;
+			}
+			RotRectF movedRoi = roi;
+			movedRoi.Cx += dx;
+			movedRoi.Cy += dy;
+			movedRoi = ClampRoiToImage(movedRoi);
+			if (RoiApproximatelyEquals(roi, movedRoi))
+			{
+				return false;
+			}
+			SetRoiBySelection(SelectedRoi, movedRoi);
+			this.RoiChanged?.Invoke();
+			Invalidate();
+			return true;
+		}
+
 		private RotRectF GetRoiBySelection(CanvasRoiSelection sel)
 		{
 			switch (sel.Kind)
@@ -1315,9 +1478,8 @@ namespace EdgeAlignInspect
 				{
 					_circlePointRois[sel.Index] = roi;
 				}
-				return;
 			}
-			if (sel.Index >= 0 && sel.Index < _circleBaseRois.Count)
+			else if (sel.Index >= 0 && sel.Index < _circleBaseRois.Count)
 			{
 				CircleBaseRoiPair value = _circleBaseRois[sel.Index];
 				if (sel.Kind == CanvasRoiKind.CircleBase1)
@@ -1369,7 +1531,7 @@ namespace EdgeAlignInspect
 			switch (SelectedRoi.Kind)
 			{
 			case CanvasRoiKind.Template:
-				if (TemplateRoi.IsEmpty)
+				if (TemplateRoi.IsEmpty || !ShowTemplateRoi)
 				{
 					SetSelection(CanvasRoiKind.None, -1);
 				}

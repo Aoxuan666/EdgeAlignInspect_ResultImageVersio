@@ -26,7 +26,14 @@ namespace EdgeAlignInspect
 					NumLevels = (src.Match?.NumLevels ?? 5),
 					AngleStart = (src.Match?.AngleStart ?? (-0.3)),
 					AngleExtent = (src.Match?.AngleExtent ?? 0.6),
-					MinScore = (src.Match?.MinScore ?? 0.5)
+					MinScore = (src.Match?.MinScore ?? 0.5),
+					UseOuterContourOnly = (src.Match?.UseOuterContourOnly ?? true),
+					EdgeSigma = (src.Match?.EdgeSigma ?? 1.2),
+					EdgeLowThreshold = (src.Match?.EdgeLowThreshold ?? 15.0),
+					EdgeHighThreshold = (src.Match?.EdgeHighThreshold ?? 35.0),
+					FeatureMinDistancePx = (src.Match?.FeatureMinDistancePx ?? 6.0),
+					FeatureAngleBins = (src.Match?.FeatureAngleBins ?? 360),
+					EraseRadiusPx = (src.Match?.EraseRadiusPx ?? 12.0)
 				},
 				BaseCaliper = (src.BaseCaliper?.DeepClone() ?? EdgeInspectJob.CreateDefaultBaseCaliper()),
 				CircleCaliper = (src.CircleCaliper?.DeepClone() ?? EdgeInspectJob.CreateDefaultCircleCaliper()),

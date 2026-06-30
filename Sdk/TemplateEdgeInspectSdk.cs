@@ -4,48 +4,32 @@ using System.Windows.Forms;
 
 namespace EdgeAlignInspect
 {
-	[Serializable]
-	public sealed class EdgeInspectionToleranceOptions
-	{
-		public double BurrToleranceMm { get; set; }
-
-		public double DentToleranceMm { get; set; }
-
-		public double OverEdgeToleranceMm { get; set; }
-
-		public double CopperLeakToleranceMm { get; set; }
-
-		public double PixelResolutionX { get; set; }
-
-		public double PixelResolutionY { get; set; }
-	}
-
 	/// <summary>
-	/// 面向上位机的边缘对位检测 SDK 入口。
+	/// 模板边缘检测 SDK，提供参数设置和检测执行入口。
 	/// </summary>
-	/// <remarks>
-	/// 配置窗口属于 WinForms 对话框，应在 UI 线程或 STA 线程调用；运行检测接口会复制输入图像和 Job，避免修改调用方对象。
-	/// </remarks>
 	public sealed class TemplateEdgeInspectSdk
 	{
 		/// <summary>
-		/// 打开参数配置窗口，让用户基于当前图像编辑并示教检测任务。
+		/// 打开参数设置窗口，用于编辑边缘检测任务。
 		/// </summary>
-		/// <param name="image">用于配置和示教的源图像。方法内部会复制该图像。</param>
-		/// <param name="currentJob">已有任务配置；传入 <c>null</c> 时创建默认配置。</param>
-		/// <returns>用户确认后的任务配置；用户取消或图像为空时返回 <c>null</c>。</returns>
-		public EdgeInspectJob OpenSetupDialog(Bitmap image, EdgeInspectJob currentJob)
+		/// <param name="image">用于设置的源图像。</param>
+		/// <param name="currentJob">当前任务参数；传入 null 时创建新任务。</param>
+		/// <param name="options">检测公差和像素分辨率参数。</param>
+		/// <returns>用户确认后返回编辑后的任务；取消时返回 null。</returns>
+		public EdgeInspectJob OpenSetupDialog(Bitmap image, EdgeInspectJob currentJob, EdgeInspectionToleranceOptions options)
 		{
 			if (image == null)
 			{
 				return null;
 			}
+			ValidateToleranceOptions(options);
 			using (Form1 form = new Form1())
 			{
 				using (Bitmap image2 = new Bitmap(image))
 				{
 					form.SetImage(image2);
 					EdgeInspectJob job = currentJob?.DeepClone() ?? new EdgeInspectJob();
+					ApplyToleranceOptions(job, options);
 					form.SetJob(job);
 					DialogResult dialogResult = form.ShowDialog();
 					if (dialogResult != DialogResult.OK)
@@ -58,19 +42,29 @@ namespace EdgeAlignInspect
 		}
 
 		/// <summary>
-		/// 使用上位机传入的图像、任务配置和判定参数执行一次检测。
+		/// 使用统一公差执行检测。
 		/// </summary>
-		/// <param name="image">待检测图像。方法内部会复制该图像。</param>
-		/// <param name="job">已完成配置和示教的检测任务。</param>
-		/// <param name="acceptedTolerance">上位机传入的毛刺判定公差，单位与像素分辨率换算后的物理单位一致。</param>
-		/// <param name="pixelResolutionX">X 方向单像素代表的物理尺寸，必须大于 0。</param>
-		/// <param name="pixelResolutionY">Y 方向单像素代表的物理尺寸，必须大于 0。</param>
-		/// <returns>检测结果。参数错误或算法异常时返回 <see cref="EdgeInspectResult.Success"/> 为 <c>false</c> 的结果对象。</returns>
+		/// <param name="image">待检测图像。</param>
+		/// <param name="job">检测任务参数。</param>
+		/// <param name="acceptedTolerance">所有缺陷类型共用的公差，单位毫米。</param>
+		/// <param name="pixelResolutionX">X 方向像素分辨率。</param>
+		/// <param name="pixelResolutionY">Y 方向像素分辨率。</param>
+		/// <returns>检测结果。</returns>
 		public EdgeInspectResult RunInspection(Bitmap image, EdgeInspectJob job, double acceptedTolerance, double pixelResolutionX, double pixelResolutionY)
 		{
 			return RunInspection(image, job, acceptedTolerance, pixelResolutionX, pixelResolutionY, false);
 		}
 
+		/// <summary>
+		/// 使用统一公差执行检测，并可选择返回渲染后的结果图。
+		/// </summary>
+		/// <param name="image">待检测图像。</param>
+		/// <param name="job">检测任务参数。</param>
+		/// <param name="acceptedTolerance">所有缺陷类型共用的公差，单位毫米。</param>
+		/// <param name="pixelResolutionX">X 方向像素分辨率。</param>
+		/// <param name="pixelResolutionY">Y 方向像素分辨率。</param>
+		/// <param name="returnResultImage">是否在 EdgeInspectResult.ResultImage 中返回渲染后的结果图。</param>
+		/// <returns>检测结果。</returns>
 		public EdgeInspectResult RunInspection(Bitmap image, EdgeInspectJob job, double acceptedTolerance, double pixelResolutionX, double pixelResolutionY, bool returnResultImage)
 		{
 			return RunInspection(image, job, new EdgeInspectionToleranceOptions
@@ -84,11 +78,26 @@ namespace EdgeAlignInspect
 			}, returnResultImage);
 		}
 
+		/// <summary>
+		/// 使用独立公差和像素分辨率参数执行检测。
+		/// </summary>
+		/// <param name="image">待检测图像。</param>
+		/// <param name="job">检测任务参数。</param>
+		/// <param name="options">检测公差和像素分辨率参数。</param>
+		/// <returns>检测结果。</returns>
 		public EdgeInspectResult RunInspection(Bitmap image, EdgeInspectJob job, EdgeInspectionToleranceOptions options)
 		{
 			return RunInspection(image, job, options, false);
 		}
 
+		/// <summary>
+		/// 使用独立公差和像素分辨率参数执行检测，并可选择返回渲染后的结果图。
+		/// </summary>
+		/// <param name="image">待检测图像。</param>
+		/// <param name="job">检测任务参数。</param>
+		/// <param name="options">检测公差和像素分辨率参数。</param>
+		/// <param name="returnResultImage">是否在 EdgeInspectResult.ResultImage 中返回渲染后的结果图。</param>
+		/// <returns>检测结果。</returns>
 		public EdgeInspectResult RunInspection(Bitmap image, EdgeInspectJob job, EdgeInspectionToleranceOptions options, bool returnResultImage)
 		{
 			if (image == null)
@@ -118,31 +127,14 @@ namespace EdgeAlignInspect
 					Message = "Tolerance options parameter is null."
 				};
 			}
-			if (options.BurrToleranceMm < 0.0 || options.DentToleranceMm < 0.0 || options.OverEdgeToleranceMm < 0.0 || options.CopperLeakToleranceMm < 0.0)
+			string validationMessage;
+			if (!TryValidateToleranceOptions(options, out validationMessage))
 			{
 				return new EdgeInspectResult
 				{
 					Success = false,
 					NgReasons = NgReason.ParameterInvalid,
-					Message = "All tolerances must be >= 0."
-				};
-			}
-			if (options.PixelResolutionX <= 0.0)
-			{
-				return new EdgeInspectResult
-				{
-					Success = false,
-					NgReasons = NgReason.ParameterInvalid,
-					Message = "Pixel resolution X must be > 0."
-				};
-			}
-			if (options.PixelResolutionY <= 0.0)
-			{
-				return new EdgeInspectResult
-				{
-					Success = false,
-					NgReasons = NgReason.ParameterInvalid,
-					Message = "Pixel resolution Y must be > 0."
+					Message = validationMessage
 				};
 			}
 			try
@@ -163,7 +155,7 @@ namespace EdgeAlignInspect
 							EdgeInspectJob jobForForm = job.DeepClone() ?? new EdgeInspectJob();
 							form.SetJob(jobForForm);
 							Application.DoEvents();
-							EdgeInspectResult result = form.RunInspectionForSdk(jobForForm, options.BurrToleranceMm, options.PixelResolutionX, options.PixelResolutionY, true);
+							EdgeInspectResult result = form.RunInspectionForSdk(jobForForm, options, true);
 							Application.DoEvents();
 							result.ResultImage = form.LastResultImage == null ? null : new Bitmap(form.LastResultImage);
 							return result;
@@ -172,13 +164,7 @@ namespace EdgeAlignInspect
 					using (TemplateEdgeInspectProcessor templateEdgeInspectProcessor = new TemplateEdgeInspectProcessor())
 					{
 						EdgeInspectJob edgeInspectJob = job.DeepClone() ?? new EdgeInspectJob();
-						edgeInspectJob.UseExternalBurrTolerance = true;
-						edgeInspectJob.ExternalBurrTolerance = options.BurrToleranceMm;
-						edgeInspectJob.ExternalDentTolerance = options.DentToleranceMm;
-						edgeInspectJob.ExternalOverEdgeTolerance = options.OverEdgeToleranceMm;
-						edgeInspectJob.ExternalCopperLeakTolerance = options.CopperLeakToleranceMm;
-						edgeInspectJob.PixelResolutionX = options.PixelResolutionX;
-						edgeInspectJob.PixelResolutionY = options.PixelResolutionY;
+						ApplyToleranceOptions(edgeInspectJob, options);
 						return templateEdgeInspectProcessor.Inspect(curBmp, edgeInspectJob);
 					}
 				}
@@ -192,6 +178,58 @@ namespace EdgeAlignInspect
 					Message = "Algorithm exception: " + ex.Message
 				};
 			}
+		}
+
+		private static void ApplyToleranceOptions(EdgeInspectJob job, EdgeInspectionToleranceOptions options)
+		{
+			if (job == null)
+			{
+				throw new ArgumentNullException("job");
+			}
+			ValidateToleranceOptions(options);
+			job.UseExternalBurrTolerance = true;
+			job.ExternalBurrTolerance = options.BurrToleranceMm;
+			job.ExternalDentTolerance = options.DentToleranceMm;
+			job.ExternalOverEdgeTolerance = options.OverEdgeToleranceMm;
+			job.ExternalCopperLeakTolerance = options.CopperLeakToleranceMm;
+			job.PixelResolutionX = options.PixelResolutionX;
+			job.PixelResolutionY = options.PixelResolutionY;
+			job.Normalize();
+		}
+
+		private static void ValidateToleranceOptions(EdgeInspectionToleranceOptions options)
+		{
+			string message;
+			if (!TryValidateToleranceOptions(options, out message))
+			{
+				throw new ArgumentException(message, "options");
+			}
+		}
+
+		private static bool TryValidateToleranceOptions(EdgeInspectionToleranceOptions options, out string message)
+		{
+			if (options == null)
+			{
+				message = "Tolerance options parameter is null.";
+				return false;
+			}
+			if (options.BurrToleranceMm < 0.0 || options.DentToleranceMm < 0.0 || options.OverEdgeToleranceMm < 0.0 || options.CopperLeakToleranceMm < 0.0)
+			{
+				message = "All tolerances must be >= 0.";
+				return false;
+			}
+			if (options.PixelResolutionX <= 0.0)
+			{
+				message = "Pixel resolution X must be > 0.";
+				return false;
+			}
+			if (options.PixelResolutionY <= 0.0)
+			{
+				message = "Pixel resolution Y must be > 0.";
+				return false;
+			}
+			message = "";
+			return true;
 		}
 	}
 }

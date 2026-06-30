@@ -1,45 +1,63 @@
 using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Linq;
 
 namespace EdgeAlignInspect
 {
 	[Serializable]
-	/// <summary>
-	/// 模板示教后保存的 HALCON 模型数据。
-	/// </summary>
+	public sealed class TemplateEraseStroke
+	{
+		public PointF Center { get; set; }
+
+		public double Radius { get; set; }
+
+		public TemplateEraseStroke DeepClone()
+		{
+			return new TemplateEraseStroke
+			{
+				Center = Center,
+				Radius = Radius
+			};
+		}
+	}
+
+	[Serializable]
 	public sealed class TemplateTeachData
 	{
-		/// <summary>是否包含有效模板。</summary>
 		public bool HasTemplate { get; set; }
 
-		/// <summary>导出的 HALCON shape model 字节数据。</summary>
 		public byte[] ModelBytes { get; set; }
 
-		/// <summary>示教时模板参考点行坐标。</summary>
+		public List<PointF> FeaturePoints { get; set; } = new List<PointF>();
+
+		public List<TemplateEraseStroke> EraseStrokes { get; set; } = new List<TemplateEraseStroke>();
+
 		public double RefRow { get; set; }
 
-		/// <summary>示教时模板参考点列坐标。</summary>
 		public double RefCol { get; set; }
 
-		/// <summary>示教时模板参考角度，单位为弧度。</summary>
 		public double RefAngle { get; set; }
 
-		/// <summary>清空模板数据。</summary>
 		public void Clear()
 		{
 			HasTemplate = false;
 			ModelBytes = null;
+			FeaturePoints?.Clear();
+			EraseStrokes?.Clear();
 			RefRow = 0.0;
 			RefCol = 0.0;
 			RefAngle = 0.0;
 		}
 
-		/// <summary>创建当前模板数据的深拷贝。</summary>
 		public TemplateTeachData DeepClone()
 		{
 			return new TemplateTeachData
 			{
 				HasTemplate = HasTemplate,
 				ModelBytes = ((ModelBytes == null) ? null : ((byte[])ModelBytes.Clone())),
+				FeaturePoints = (FeaturePoints == null ? new List<PointF>() : new List<PointF>(FeaturePoints)),
+				EraseStrokes = (EraseStrokes == null ? new List<TemplateEraseStroke>() : EraseStrokes.Select(x => x?.DeepClone() ?? new TemplateEraseStroke()).ToList()),
 				RefRow = RefRow,
 				RefCol = RefCol,
 				RefAngle = RefAngle
