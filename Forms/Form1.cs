@@ -2493,6 +2493,11 @@ namespace EdgeAlignInspect
 			return value;
 		}
 
+		private static string LocalizedRoiName(string name, InspectionLanguage language)
+		{
+			return LocalizedText.Message(name ?? "", language);
+		}
+
 		private void ShowResult(EdgeInspectResult r)
 		{
 			if (r == null)
@@ -2532,7 +2537,7 @@ namespace EdgeAlignInspect
 			int num = r.DetectResults.Count((DetectRoiInspectResult x) => !x.Success);
 			List<string> list = (from x in r.DetectResults
 				where !x.Success
-				select x.Name + ": " + x.Message).Take(6).ToList();
+				select LocalizedRoiName(x.Name, language) + ": " + x.Message).Take(6).ToList();
 			lblStatus.Text = (r.Success ? "OK" : "NG");
 			lblStatus.BackColor = (r.Success ? Color.LimeGreen : Color.Red);
 			lblSummary.Text = LocalizedText.Message($"模式 {text2} | 判定 {judgeModeText} | 模板匹配 {text}\n检测 {r.DetectResults.Count} | 失败 {num} | 毛刺 {r.BurrCount} | 凹陷 {r.DentCount} | 超边 {r.OverEdgeCount} | 漏铜 {r.CopperLeakCount}", language);
@@ -2551,21 +2556,22 @@ namespace EdgeAlignInspect
 			List<string> list3 = list2;
 			foreach (DetectRoiInspectResult item in r.DetectResults)
 			{
+				string displayName = LocalizedRoiName(item.Name, language);
 				string arg = (double.IsNaN(item.AngleDeltaDeg) ? "N/A" : $"{item.AngleDeltaDeg:F3}°");
 				if (item.Success)
 				{
 					if (item.HasOverallDistance)
 					{
-						list3.Add(LocalizedText.Message($"{item.Name}: OK | 整体={item.OverallDistanceValue:F4}mm Δ={item.OverallDeltaValue:+0.0000;-0.0000;0.0000}mm | 像素={item.OverallDistancePx:F2}px", language));
+						list3.Add(LocalizedText.Message($"{displayName}: OK | 整体={item.OverallDistanceValue:F4}mm Δ={item.OverallDeltaValue:+0.0000;-0.0000;0.0000}mm | 像素={item.OverallDistancePx:F2}px", language));
 					}
 					else
 					{
-						list3.Add(LocalizedText.Message($"{item.Name}: OK | 标准={PxToMm(item.NominalDistancePx):F4}mm | 角差={arg}", language));
+						list3.Add(LocalizedText.Message($"{displayName}: OK | 标准={PxToMm(item.NominalDistancePx):F4}mm | 角差={arg}", language));
 					}
 				}
 				else
 				{
-					list3.Add(item.Name + ": NG | " + item.Message);
+					list3.Add(LocalizedText.Message(displayName + ": NG | " + item.Message, language));
 				}
 			}
 			canvas.HudTextColor = (r.Success ? Color.Lime : Color.Red);
