@@ -1,4 +1,4 @@
-namespace EdgeAlignInspect
+﻿namespace EdgeAlignInspect
 {
 	public static class EdgeInspectJobCloneExtensions
 	{
@@ -11,6 +11,7 @@ namespace EdgeAlignInspect
 			EdgeInspectJob edgeInspectJob = new EdgeInspectJob
 			{
 				TemplateRoi = src.TemplateRoi,
+				Language = src.Language,
 				UseReferenceLine = src.UseReferenceLine,
 				DetectMode = src.DetectMode,
 				UseExternalBurrTolerance = src.UseExternalBurrTolerance,

@@ -110,6 +110,8 @@ namespace EdgeAlignInspect
 
 		private CheckBox chkEnableMatch;
 
+		private ComboBox cboLanguage;
+
 		private NumericUpDown numMatchMinScore;
 
 		private NumericUpDown numMatchAngleStart;
@@ -140,7 +142,9 @@ namespace EdgeAlignInspect
 			_job.Normalize();
 			_job.Match.Enabled = false;
 			chkEnableMatch.Checked = false;
+			SetLanguageComboSelection(_job.Language);
 			BindEvents();
+			ApplyLanguageToUi();
 			UpdateMatchUiState();
 			UpdateUseReferenceUiState();
 			UpdateSelectionHint();
@@ -276,20 +280,24 @@ namespace EdgeAlignInspect
 		{
 			if (_src == null)
 			{
+				InspectionLanguage language = (job ?? _job)?.Language ?? InspectionLanguage.Chinese;
 				return new EdgeInspectResult
 				{
 					Success = false,
 					NgReasons = NgReason.ParameterInvalid,
-					Message = "Input image is null."
+					Language = language,
+					Message = LocalizedText.Message("输入图像为空。", language)
 				};
 			}
 			if (options == null)
 			{
+				InspectionLanguage language = (job ?? _job)?.Language ?? InspectionLanguage.Chinese;
 				return new EdgeInspectResult
 				{
 					Success = false,
 					NgReasons = NgReason.ParameterInvalid,
-					Message = "Tolerance options parameter is null."
+					Language = language,
+					Message = LocalizedText.Message("公差参数为空。", language)
 				};
 			}
 			EdgeInspectJob edgeInspectJob = (job ?? _job)?.DeepClone() ?? new EdgeInspectJob();
@@ -471,6 +479,7 @@ namespace EdgeAlignInspect
 					canvas.ShowRuntimeRois = false;
 					canvas.ClearRuntimeRois();
 					PullCanvasRoisToJob();
+					MarkSelectedRoiAsManual();
 					NormalizeDetectBaseBindings();
 					RefreshBaseBindingCombo();
 					LoadSelectedDetectToUi();
@@ -565,6 +574,16 @@ namespace EdgeAlignInspect
 			cboDetectBindBase.SelectedIndexChanged += DetectItemUiChanged;
 			numNominal.ValueChanged += DetectItemUiChanged;
 			cboDetectMode.SelectedIndexChanged += GlobalUiParamChanged;
+			cboLanguage.SelectedIndexChanged += delegate
+			{
+				if (_suppressUiEvents)
+				{
+					return;
+				}
+				_job.Language = LanguageFromUi();
+				ApplyLanguageToUi();
+				SetReady("READY", _job.Language == InspectionLanguage.English ? "Language switched to English." : "语言已切换为中文。");
+			};
 			cboBasePol.SelectedIndexChanged += CurrentBaseCaliperUiChanged;
 			numBaseMeasures.ValueChanged += CurrentBaseCaliperUiChanged;
 			numBaseSigma.ValueChanged += CurrentBaseCaliperUiChanged;
@@ -869,6 +888,7 @@ namespace EdgeAlignInspect
 			}
 			_job.DetectMode = DetectModeFromUi();
 			_job.Match.Enabled = chkEnableMatch.Checked;
+			_job.Language = LanguageFromUi();
 			_job.Match.MinScore = (double)numMatchMinScore.Value;
 			_job.Match.AngleStart = (double)numMatchAngleStart.Value;
 			_job.Match.AngleExtent = (double)numMatchAngleExtent.Value;
@@ -1077,6 +1097,7 @@ namespace EdgeAlignInspect
 				_job.BaseRois.Add(new BaseRoiItem
 				{
 					Name = $"基准{_job.BaseRois.Count + 1}",
+					UseTemplateTransform = true,
 					Caliper = (_job.BaseCaliper?.DeepClone() ?? EdgeInspectJob.CreateDefaultBaseCaliper())
 				});
 			}
@@ -1101,6 +1122,7 @@ namespace EdgeAlignInspect
 				_job.CircleBaseRois.Add(new CircleBaseRoiItem
 				{
 					Name = $"圆基准{_job.CircleBaseRois.Count + 1}",
+					UseTemplateTransform = true,
 					Caliper = (_job.CircleCaliper?.DeepClone() ?? EdgeInspectJob.CreateDefaultCircleCaliper())
 				});
 			}
@@ -1126,6 +1148,7 @@ namespace EdgeAlignInspect
 				_job.CirclePointRois.Add(new CirclePointRoiItem
 				{
 					Name = $"圆点基准{_job.CirclePointRois.Count + 1}",
+					UseTemplateTransform = true,
 					Caliper = (_job.CircleCaliper?.DeepClone() ?? EdgeInspectJob.CreateDefaultCircleCaliper())
 				});
 			}
@@ -1150,6 +1173,7 @@ namespace EdgeAlignInspect
 				_job.DetectItems.Add(new DetectRoiItem
 				{
 					Name = $"检测{_job.DetectItems.Count + 1}",
+					UseTemplateTransform = true,
 					BaseRoiIndex = 0,
 					BaseRoiId = ((_job.BaseRois.Count > 0) ? (_job.BaseRois[0]?.Id ?? "") : ""),
 					Caliper = (_job.DetectCaliper?.DeepClone() ?? EdgeInspectJob.CreateDefaultDetectCaliper())
@@ -1173,6 +1197,44 @@ namespace EdgeAlignInspect
 				_job.NormalizeDetectBinding(_job.DetectItems[l]);
 			}
 			_job.Normalize();
+		}
+
+		private void MarkSelectedRoiAsManual()
+		{
+			CanvasRoiSelection selectedRoi = canvas.SelectedRoi;
+			if (!selectedRoi.IsValid)
+			{
+				return;
+			}
+			int index = selectedRoi.Index;
+			switch (selectedRoi.Kind)
+			{
+			case CanvasRoiKind.Base:
+				if (index >= 0 && index < _job.BaseRois.Count)
+				{
+					_job.BaseRois[index].UseTemplateTransform = false;
+				}
+				break;
+			case CanvasRoiKind.CircleBase1:
+			case CanvasRoiKind.CircleBase2:
+				if (index >= 0 && index < _job.CircleBaseRois.Count)
+				{
+					_job.CircleBaseRois[index].UseTemplateTransform = false;
+				}
+				break;
+			case CanvasRoiKind.CirclePoint:
+				if (index >= 0 && index < _job.CirclePointRois.Count)
+				{
+					_job.CirclePointRois[index].UseTemplateTransform = false;
+				}
+				break;
+			case CanvasRoiKind.Detect:
+				if (index >= 0 && index < _job.DetectItems.Count)
+				{
+					_job.DetectItems[index].UseTemplateTransform = false;
+				}
+				break;
+			}
 		}
 
 		private void NormalizeDetectBaseBindings()
@@ -1273,6 +1335,7 @@ namespace EdgeAlignInspect
 			if (job != null)
 			{
 				chkEnableMatch.Checked = job.Match.Enabled;
+				SetLanguageComboSelection(job.Language);
 				chkUseReferenceLine.Checked = job.UseReferenceLine;
 				cboDetectMode.SelectedIndex = DetectModeToIndex(job.DetectMode);
 				numMatchMinScore.Value = ClampDecimal((decimal)job.Match.MinScore, numMatchMinScore);
@@ -1280,6 +1343,7 @@ namespace EdgeAlignInspect
 				numMatchAngleExtent.Value = ClampDecimal((decimal)job.Match.AngleExtent, numMatchAngleExtent);
 				UpdateMatchUiState();
 				UpdateUseReferenceUiState();
+				ApplyLanguageToUi();
 				FixRightPanelLayout();
 			}
 		}
@@ -1778,6 +1842,91 @@ namespace EdgeAlignInspect
 			numMatchMinScore.Enabled = enabled;
 			numMatchAngleStart.Enabled = enabled;
 			numMatchAngleExtent.Enabled = enabled;
+		}
+
+		private InspectionLanguage LanguageFromUi()
+		{
+			return cboLanguage != null && cboLanguage.SelectedIndex == 1 ? InspectionLanguage.English : InspectionLanguage.Chinese;
+		}
+
+		private void SetLanguageComboSelection(InspectionLanguage language)
+		{
+			if (cboLanguage == null)
+			{
+				return;
+			}
+			if (cboLanguage.Items.Count != 2)
+			{
+				cboLanguage.Items.Clear();
+				cboLanguage.Items.AddRange(new object[2] { "中文", "English" });
+			}
+			cboLanguage.SelectedIndex = language == InspectionLanguage.English ? 1 : 0;
+		}
+
+		private void ApplyLanguageToUi()
+		{
+			InspectionLanguage language = _job?.Language ?? InspectionLanguage.Chinese;
+			bool oldSuppress = _suppressUiEvents;
+			_suppressUiEvents = true;
+			try
+			{
+				RefreshLanguageSensitiveCombos(language);
+				ApplyLanguageToControl(this, language);
+				SetLanguageComboSelection(language);
+				canvas.Language = language;
+				canvas.Invalidate();
+			}
+			finally
+			{
+				_suppressUiEvents = oldSuppress;
+			}
+		}
+
+		private static void ApplyLanguageToControl(Control control, InspectionLanguage language)
+		{
+			if (control == null)
+			{
+				return;
+			}
+			if (!(control is ComboBox) && !IsStatusToken(control.Text) && !string.IsNullOrEmpty(control.Text))
+			{
+				control.Text = LocalizedText.Ui(control.Text, language);
+			}
+			foreach (Control child in control.Controls)
+			{
+				ApplyLanguageToControl(child, language);
+			}
+		}
+
+		private static bool IsStatusToken(string text)
+		{
+			return text == "OK" || text == "NG" || text == "READY" || text == "WAIT";
+		}
+
+		private void RefreshLanguageSensitiveCombos(InspectionLanguage language)
+		{
+			SetComboItems(cboDetectMode, new string[3] { "两者都检测", "只检测毛刺", "只检测凹陷" }, language);
+			SetComboItems(cboAngleRef, new string[3] { "平行于关联基准线", "水平", "竖直" }, language);
+			SetComboItems(cboBasePol, new string[3] { "白找黑", "黑找白", "任意" }, language);
+			SetComboItems(cboDetPol, new string[3] { "白找黑", "黑找白", "任意" }, language);
+		}
+
+		private static void SetComboItems(ComboBox combo, string[] chineseItems, InspectionLanguage language)
+		{
+			if (combo == null || chineseItems == null)
+			{
+				return;
+			}
+			int selectedIndex = combo.SelectedIndex;
+			combo.Items.Clear();
+			foreach (string item in chineseItems)
+			{
+				combo.Items.Add(LocalizedText.Ui(item, language));
+			}
+			if (combo.Items.Count > 0)
+			{
+				combo.SelectedIndex = Math.Max(0, Math.Min(selectedIndex, combo.Items.Count - 1));
+			}
 		}
 
 		private void UpdateUseReferenceUiState()
@@ -2351,6 +2500,8 @@ namespace EdgeAlignInspect
 				SetError("错误", "结果为空");
 				return;
 			}
+			InspectionLanguage language = r.Language;
+			canvas.Language = language;
 			bool flag = r.HasReferenceLineItems || (r.DetectResults != null && r.DetectResults.Any((DetectRoiInspectResult x) => x?.UseReferenceLine ?? false));
 			canvas.ClearRuntimeRois();
 			canvas.SetRuntimeRois(r.TemplateRoiCur, flag ? r.BaseResults.Select((BaseRoiInspectResult x) => x.RoiCur) : Enumerable.Empty<RotRectF>(), flag ? r.CircleBaseResults.Select((CircleBaseRoiInspectResult x) => new CircleBaseRoiPair
@@ -2360,21 +2511,21 @@ namespace EdgeAlignInspect
 			}) : Enumerable.Empty<CircleBaseRoiPair>(), Enumerable.Empty<CircleRoiF>(), r.DetectResults.Select((DetectRoiInspectResult x) => x.RoiCur));
 			canvas.ShowRuntimeRois = true;
 			canvas.ShowRois = false;
-			string text = ((!r.TemplateMatchEnabled) ? "关闭" : (r.TemplateMatchOk ? $"OK({r.TemplateMatchScore:0.00})" : "NG"));
-			string text2 = DetectModeToText(r.DetectMode);
-			string judgeModeText = GetJudgeModeText(r);
+			string text = ((!r.TemplateMatchEnabled) ? LocalizedText.Message("关闭", language) : (r.TemplateMatchOk ? $"OK({r.TemplateMatchScore:0.00})" : "NG"));
+			string text2 = LocalizedText.Message(DetectModeToText(r.DetectMode), language);
+			string judgeModeText = LocalizedText.Message(GetJudgeModeText(r), language);
 			if (r.TemplateMatchEnabled && !r.TemplateMatchOk)
 			{
 				lblStatus.Text = "NG";
 				lblStatus.BackColor = Color.Red;
-				lblSummary.Text = "模板匹配: NG";
+				lblSummary.Text = LocalizedText.Message("模板匹配: NG", language);
 				lblSummary.ForeColor = Color.FromArgb(210, 40, 40);
-				lblResultTip.Text = "请检查模板 ROI、最小分数、角度范围和图像质量";
+				lblResultTip.Text = LocalizedText.Message("请检查模板 ROI、最小分数、角度范围和图像质量", language);
 				FixMultiLineLabel(lblSummary, 10);
 				FixMultiLineLabel(lblResultTip, 10);
 				canvas.ClearOverlays();
 				canvas.HudTextColor = Color.Red;
-				canvas.HudText = "模板匹配: NG\n请检查：模板ROI/最小分数/角度范围/图像质量";
+				canvas.HudText = LocalizedText.Message("模板匹配: NG\n请检查：模板ROI/最小分数/角度范围/图像质量", language);
 				canvas.Invalidate();
 				return;
 			}
@@ -2384,19 +2535,19 @@ namespace EdgeAlignInspect
 				select x.Name + ": " + x.Message).Take(6).ToList();
 			lblStatus.Text = (r.Success ? "OK" : "NG");
 			lblStatus.BackColor = (r.Success ? Color.LimeGreen : Color.Red);
-			lblSummary.Text = $"模式 {text2} | 判定 {judgeModeText} | 模板匹配 {text}\n检测 {r.DetectResults.Count} | 失败 {num} | 毛刺 {r.BurrCount} | 凹陷 {r.DentCount} | 超边 {r.OverEdgeCount} | 漏铜 {r.CopperLeakCount}";
+			lblSummary.Text = LocalizedText.Message($"模式 {text2} | 判定 {judgeModeText} | 模板匹配 {text}\n检测 {r.DetectResults.Count} | 失败 {num} | 毛刺 {r.BurrCount} | 凹陷 {r.DentCount} | 超边 {r.OverEdgeCount} | 漏铜 {r.CopperLeakCount}", language);
 			lblSummary.ForeColor = (r.Success ? Color.FromArgb(0, 140, 60) : Color.FromArgb(210, 40, 40));
-			lblResultTip.Text = ((list.Count > 0) ? string.Join("；", list) : $"Δ最小 {r.DeltaMin:F2}px | Δ最大 {r.DeltaMax:F2}px | Δ平均 {r.DeltaMean:F2}px");
+			lblResultTip.Text = LocalizedText.Message((list.Count > 0) ? string.Join("；", list) : $"Δ最小 {r.DeltaMin:F2}px | Δ最大 {r.DeltaMax:F2}px | Δ平均 {r.DeltaMean:F2}px", language);
 			FixMultiLineLabel(lblSummary, 10);
 			FixMultiLineLabel(lblResultTip, 10);
 			List<string> list2 = new List<string>();
-			list2.Add("检测模式: " + text2);
-			list2.Add("判定方式: " + judgeModeText);
-			list2.Add("模板匹配: " + text);
-			list2.Add("结果: " + (r.Success ? "OK" : "NG"));
-			list2.Add($"线基准: {r.BaseResults.Count}    圆基准: {r.CircleBaseResults.Count}    圆点: {r.CirclePointResults.Count}    检测ROI: {r.DetectResults.Count}");
-			list2.Add($"失败ROI: {num}    毛刺: {r.BurrCount}    凹陷: {r.DentCount}    超边: {r.OverEdgeCount}    漏铜: {r.CopperLeakCount}");
-			list2.Add($"局部Δ 最小/最大/平均: {r.DeltaMin:F2} / {r.DeltaMax:F2} / {r.DeltaMean:F2}");
+			list2.Add(LocalizedText.Message("检测模式: " + text2, language));
+			list2.Add(LocalizedText.Message("判定方式: " + judgeModeText, language));
+			list2.Add(LocalizedText.Message("模板匹配: " + text, language));
+			list2.Add(LocalizedText.Message("结果: " + (r.Success ? "OK" : "NG"), language));
+			list2.Add(LocalizedText.Message($"线基准: {r.BaseResults.Count}    圆基准: {r.CircleBaseResults.Count}    圆点: {r.CirclePointResults.Count}    检测ROI: {r.DetectResults.Count}", language));
+			list2.Add(LocalizedText.Message($"失败ROI: {num}    毛刺: {r.BurrCount}    凹陷: {r.DentCount}    超边: {r.OverEdgeCount}    漏铜: {r.CopperLeakCount}", language));
+			list2.Add(LocalizedText.Message($"局部Δ 最小/最大/平均: {r.DeltaMin:F2} / {r.DeltaMax:F2} / {r.DeltaMean:F2}", language));
 			List<string> list3 = list2;
 			foreach (DetectRoiInspectResult item in r.DetectResults)
 			{
@@ -2405,11 +2556,11 @@ namespace EdgeAlignInspect
 				{
 					if (item.HasOverallDistance)
 					{
-						list3.Add($"{item.Name}: OK | 整体={item.OverallDistanceValue:F4}mm Δ={item.OverallDeltaValue:+0.0000;-0.0000;0.0000}mm | 像素={item.OverallDistancePx:F2}px");
+						list3.Add(LocalizedText.Message($"{item.Name}: OK | 整体={item.OverallDistanceValue:F4}mm Δ={item.OverallDeltaValue:+0.0000;-0.0000;0.0000}mm | 像素={item.OverallDistancePx:F2}px", language));
 					}
 					else
 					{
-						list3.Add($"{item.Name}: OK | 标准={PxToMm(item.NominalDistancePx):F4}mm | 角差={arg}");
+						list3.Add(LocalizedText.Message($"{item.Name}: OK | 标准={PxToMm(item.NominalDistancePx):F4}mm | 角差={arg}", language));
 					}
 				}
 				else
@@ -2749,11 +2900,12 @@ namespace EdgeAlignInspect
 
 		private void SetReady(string status, string msg)
 		{
+			InspectionLanguage language = _job?.Language ?? InspectionLanguage.Chinese;
 			lblStatus.Text = status;
 			lblStatus.BackColor = Color.LightGray;
-			lblSummary.Text = msg;
+			lblSummary.Text = LocalizedText.Message(msg, language);
 			lblSummary.ForeColor = Color.FromArgb(90, 90, 90);
-			lblResultTip.Text = "运行后会在左侧图像显示线、点和偏差标注";
+			lblResultTip.Text = LocalizedText.Message("运行后会在左侧图像显示线、点和偏差标注", language);
 			FixMultiLineLabel(lblSummary, 10);
 			FixMultiLineLabel(lblResultTip, 10);
 			canvas.ClearOverlays();
@@ -2766,18 +2918,19 @@ namespace EdgeAlignInspect
 
 		private void SetError(string status, string msg)
 		{
+			InspectionLanguage language = _job?.Language ?? InspectionLanguage.Chinese;
 			lblStatus.Text = status;
 			lblStatus.BackColor = Color.Goldenrod;
-			lblSummary.Text = msg;
+			lblSummary.Text = LocalizedText.Message(msg, language);
 			lblSummary.ForeColor = Color.FromArgb(180, 120, 0);
-			lblResultTip.Text = "错误信息已显示在左侧图像提示中";
+			lblResultTip.Text = LocalizedText.Message("错误信息已显示在左侧图像提示中", language);
 			FixMultiLineLabel(lblSummary, 10);
 			FixMultiLineLabel(lblResultTip, 10);
 			canvas.ClearOverlays();
 			canvas.ClearRuntimeRois();
 			canvas.ShowRuntimeRois = false;
 			canvas.HudTextColor = Color.Gold;
-			canvas.HudText = "错误:\n" + msg;
+			canvas.HudText = LocalizedText.Message("错误:\n" + msg, language);
 			canvas.Invalidate();
 		}
 
@@ -2960,6 +3113,7 @@ namespace EdgeAlignInspect
 			this.btnSaveTeach = new System.Windows.Forms.Button();
 			this.btnRun = new System.Windows.Forms.Button();
 			this.btnConfirm = new System.Windows.Forms.Button();
+			this.cboLanguage = new System.Windows.Forms.ComboBox();
 			this.lblRoiHint = new System.Windows.Forms.Label();
 			this.grpParams = new System.Windows.Forms.GroupBox();
 			this.chkDetectEnabled = new System.Windows.Forms.CheckBox();
@@ -3041,6 +3195,8 @@ namespace EdgeAlignInspect
 			EdgeAlignInspect.Form1.SetupButton(this.btnAddDetectRoi, "添加检测ROI", 368, 60, 104, 30, false);
 			EdgeAlignInspect.Form1.SetupButton(this.btnSaveTeach, "保存(示教)", 14, 96, 222, 30, false);
 			EdgeAlignInspect.Form1.SetupButton(this.btnConfirm, "确认配置", 250, 96, 222, 30, false);
+			EdgeAlignInspect.Form1.AddLabel(this.grpOps, "语言", 246, 132, 48, 28);
+			EdgeAlignInspect.Form1.SetupLanguageCombo(this.cboLanguage, 302, 132, 110, 28);
 			this.lblRoiHint.Text = "直接点击左侧图像中的 ROI 进行选中、拖动、旋转和缩放；毛刺公差由上位机传入。";
 			this.lblRoiHint.Font = new System.Drawing.Font("微软雅黑", 8.5f, System.Drawing.FontStyle.Regular);
 			this.lblRoiHint.ForeColor = System.Drawing.Color.FromArgb(90, 90, 90);
@@ -3057,6 +3213,7 @@ namespace EdgeAlignInspect
 			this.grpOps.Controls.Add(this.btnAddDetectRoi);
 			this.grpOps.Controls.Add(this.btnSaveTeach);
 			this.grpOps.Controls.Add(this.btnConfirm);
+			this.grpOps.Controls.Add(this.cboLanguage);
 			this.grpOps.Controls.Add(this.lblRoiHint);
 			this.grpParams.Text = "参数";
 			this.grpParams.Font = new System.Drawing.Font("微软雅黑", 9f, System.Drawing.FontStyle.Bold);
@@ -3300,6 +3457,16 @@ namespace EdgeAlignInspect
 			c.DropDownStyle = ComboBoxStyle.DropDownList;
 			c.SetBounds(x, y, w, h);
 			c.DropDownWidth = dropDownWidth;
+		}
+
+		private static void SetupLanguageCombo(ComboBox c, int x, int y, int w, int h)
+		{
+			c.DropDownStyle = ComboBoxStyle.DropDownList;
+			c.Items.Clear();
+			c.Items.AddRange(new object[2] { "中文", "English" });
+			c.SelectedIndex = 0;
+			c.SetBounds(x, y, w, h);
+			c.DropDownWidth = 120;
 		}
 
 		private static void SetupPolCombo(ComboBox c, int x, int y, int w, int h)

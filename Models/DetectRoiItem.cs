@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 
 namespace EdgeAlignInspect
 {
@@ -10,6 +10,8 @@ namespace EdgeAlignInspect
 		public string Name { get; set; } = "检测1";
 
 		public RotRectF Roi { get; set; }
+
+		public bool UseTemplateTransform { get; set; } = true;
 
 		public bool UseReferenceLine { get; set; } = true;
 
@@ -46,6 +48,7 @@ namespace EdgeAlignInspect
 				Id = Id,
 				Name = Name,
 				Roi = Roi,
+				UseTemplateTransform = UseTemplateTransform,
 				UseReferenceLine = UseReferenceLine,
 				ReferenceBaseKind = ReferenceBaseKind,
 				BaseRoiIndex = BaseRoiIndex,

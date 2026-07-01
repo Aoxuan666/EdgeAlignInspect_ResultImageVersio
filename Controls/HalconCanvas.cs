@@ -93,6 +93,8 @@ namespace EdgeAlignInspect
 
 		public bool AllowRoiEditing { get; set; } = true;
 
+		public InspectionLanguage Language { get; set; } = InspectionLanguage.Chinese;
+
 		public event Action<PointF, MouseButtons> ImageMouseDown;
 
 		public event Action<PointF, MouseButtons> ImageMouseMove;
@@ -680,22 +682,22 @@ namespace EdgeAlignInspect
 			graphics.SmoothingMode = SmoothingMode.AntiAlias;
 			if (_bmp == null)
 			{
-				TextRenderer.DrawText(graphics, "请加载图片", Font, base.ClientRectangle, Color.Gray, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+				TextRenderer.DrawText(graphics, LocalizedText.Ui("请加载图片", Language), Font, base.ClientRectangle, Color.Gray, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
 				return;
 			}
 			graphics.DrawImage(_bmp, _pan.X, _pan.Y, (float)_bmp.Width * _zoom, (float)_bmp.Height * _zoom);
 			if (ShowRois)
 			{
-				DrawRoi(graphics, TemplateRoi, "模板", Color.Red, SelectedRoi.Kind == CanvasRoiKind.Template, drawArrow: false, dashed: false, SelectedRoi.Kind == CanvasRoiKind.Template);
+				DrawRoi(graphics, TemplateRoi, LocalizedText.Ui("模板", Language), Color.Red, SelectedRoi.Kind == CanvasRoiKind.Template, drawArrow: false, dashed: false, SelectedRoi.Kind == CanvasRoiKind.Template);
 				for (int i = 0; i < _baseRois.Count; i++)
 				{
-					DrawRoi(graphics, _baseRois[i], $"基准{i + 1}", (i == 0) ? Color.Yellow : Color.Orange, SelectedRoi.Kind == CanvasRoiKind.Base && SelectedRoi.Index == i, drawArrow: true, dashed: false, SelectedRoi.Kind == CanvasRoiKind.Base && SelectedRoi.Index == i);
+					DrawRoi(graphics, _baseRois[i], LocalizedText.Ui($"基准{i + 1}", Language), (i == 0) ? Color.Yellow : Color.Orange, SelectedRoi.Kind == CanvasRoiKind.Base && SelectedRoi.Index == i, drawArrow: true, dashed: false, SelectedRoi.Kind == CanvasRoiKind.Base && SelectedRoi.Index == i);
 				}
 				for (int j = 0; j < _circleBaseRois.Count; j++)
 				{
 					CircleBaseRoiPair circleBaseRoiPair = _circleBaseRois[j];
-					DrawCircleRoi(graphics, circleBaseRoiPair.Circle1, $"圆基准{j + 1}-1", Color.Cyan, SelectedRoi.Kind == CanvasRoiKind.CircleBase1 && SelectedRoi.Index == j, SelectedRoi.Kind == CanvasRoiKind.CircleBase1 && SelectedRoi.Index == j);
-					DrawCircleRoi(graphics, circleBaseRoiPair.Circle2, $"圆基准{j + 1}-2", Color.Cyan, SelectedRoi.Kind == CanvasRoiKind.CircleBase2 && SelectedRoi.Index == j, SelectedRoi.Kind == CanvasRoiKind.CircleBase2 && SelectedRoi.Index == j);
+					DrawCircleRoi(graphics, circleBaseRoiPair.Circle1, LocalizedText.Ui($"圆基准{j + 1}-1", Language), Color.Cyan, SelectedRoi.Kind == CanvasRoiKind.CircleBase1 && SelectedRoi.Index == j, SelectedRoi.Kind == CanvasRoiKind.CircleBase1 && SelectedRoi.Index == j);
+					DrawCircleRoi(graphics, circleBaseRoiPair.Circle2, LocalizedText.Ui($"圆基准{j + 1}-2", Language), Color.Cyan, SelectedRoi.Kind == CanvasRoiKind.CircleBase2 && SelectedRoi.Index == j, SelectedRoi.Kind == CanvasRoiKind.CircleBase2 && SelectedRoi.Index == j);
 					if (!circleBaseRoiPair.Circle1.IsEmpty && !circleBaseRoiPair.Circle2.IsEmpty)
 					{
 						using (Pen pen = new Pen(Color.Cyan, 2f))
@@ -706,25 +708,25 @@ namespace EdgeAlignInspect
 				}
 				for (int k = 0; k < _detectRois.Count; k++)
 				{
-					DrawRoi(graphics, _detectRois[k], $"检测{k + 1}", Color.Lime, SelectedRoi.Kind == CanvasRoiKind.Detect && SelectedRoi.Index == k, drawArrow: true, dashed: false, SelectedRoi.Kind == CanvasRoiKind.Detect && SelectedRoi.Index == k);
+					DrawRoi(graphics, _detectRois[k], LocalizedText.Ui($"检测{k + 1}", Language), Color.Lime, SelectedRoi.Kind == CanvasRoiKind.Detect && SelectedRoi.Index == k, drawArrow: true, dashed: false, SelectedRoi.Kind == CanvasRoiKind.Detect && SelectedRoi.Index == k);
 				}
 				for (int l = 0; l < _circlePointRois.Count; l++)
 				{
-					DrawCircleRoi(graphics, _circlePointRois[l], $"圆点基准{l + 1}", Color.DeepSkyBlue, SelectedRoi.Kind == CanvasRoiKind.CirclePoint && SelectedRoi.Index == l, SelectedRoi.Kind == CanvasRoiKind.CirclePoint && SelectedRoi.Index == l);
+					DrawCircleRoi(graphics, _circlePointRois[l], LocalizedText.Ui($"圆点基准{l + 1}", Language), Color.DeepSkyBlue, SelectedRoi.Kind == CanvasRoiKind.CirclePoint && SelectedRoi.Index == l, SelectedRoi.Kind == CanvasRoiKind.CirclePoint && SelectedRoi.Index == l);
 				}
 			}
 			if (ShowRuntimeRois)
 			{
-				DrawRoi(graphics, RuntimeTemplateRoi, "模板(运行)", Color.FromArgb(230, 255, 120, 120), selected: false, drawArrow: false, dashed: true, showHandles: false);
+				DrawRoi(graphics, RuntimeTemplateRoi, LocalizedText.Ui("模板(运行)", Language), Color.FromArgb(230, 255, 120, 120), selected: false, drawArrow: false, dashed: true, showHandles: false);
 				for (int m = 0; m < _runtimeBaseRois.Count; m++)
 				{
-					DrawRoi(graphics, _runtimeBaseRois[m], $"基准{m + 1}(运行)", (m == 0) ? Color.FromArgb(230, 0, 255, 255) : Color.FromArgb(230, 255, 180, 0), selected: false, drawArrow: true, dashed: true, showHandles: false);
+					DrawRoi(graphics, _runtimeBaseRois[m], LocalizedText.Ui($"基准{m + 1}(运行)", Language), (m == 0) ? Color.FromArgb(230, 0, 255, 255) : Color.FromArgb(230, 255, 180, 0), selected: false, drawArrow: true, dashed: true, showHandles: false);
 				}
 				for (int n = 0; n < _runtimeCircleBaseRois.Count; n++)
 				{
 					CircleBaseRoiPair circleBaseRoiPair2 = _runtimeCircleBaseRois[n];
-					DrawCircleRoi(graphics, circleBaseRoiPair2.Circle1, $"圆基准{n + 1}-1(运行)", Color.FromArgb(230, 0, 255, 255), selected: false, showHandles: false);
-					DrawCircleRoi(graphics, circleBaseRoiPair2.Circle2, $"圆基准{n + 1}-2(运行)", Color.FromArgb(230, 0, 255, 255), selected: false, showHandles: false);
+					DrawCircleRoi(graphics, circleBaseRoiPair2.Circle1, LocalizedText.Ui($"圆基准{n + 1}-1(运行)", Language), Color.FromArgb(230, 0, 255, 255), selected: false, showHandles: false);
+					DrawCircleRoi(graphics, circleBaseRoiPair2.Circle2, LocalizedText.Ui($"圆基准{n + 1}-2(运行)", Language), Color.FromArgb(230, 0, 255, 255), selected: false, showHandles: false);
 					if (!circleBaseRoiPair2.Circle1.IsEmpty && !circleBaseRoiPair2.Circle2.IsEmpty)
 					{
 						using (Pen pen2 = new Pen(Color.FromArgb(230, 0, 255, 255), 2f))
@@ -736,11 +738,11 @@ namespace EdgeAlignInspect
 				}
 				for (int num = 0; num < _runtimeDetectRois.Count; num++)
 				{
-					DrawRoi(graphics, _runtimeDetectRois[num], $"检测{num + 1}(运行)", Color.FromArgb(230, 255, 0, 255), selected: false, drawArrow: true, dashed: true, showHandles: false);
+					DrawRoi(graphics, _runtimeDetectRois[num], LocalizedText.Ui($"检测{num + 1}(运行)", Language), Color.FromArgb(230, 255, 0, 255), selected: false, drawArrow: true, dashed: true, showHandles: false);
 				}
 				for (int num2 = 0; num2 < _runtimeCirclePointRois.Count; num2++)
 				{
-					DrawCircleRoi(graphics, _runtimeCirclePointRois[num2], $"圆点基准{num2 + 1}(运行)", Color.FromArgb(230, 0, 190, 255), selected: false, showHandles: false);
+					DrawCircleRoi(graphics, _runtimeCirclePointRois[num2], LocalizedText.Ui($"圆点基准{num2 + 1}(运行)", Language), Color.FromArgb(230, 0, 190, 255), selected: false, showHandles: false);
 				}
 			}
 			foreach (ColoredPolyline overlayLine in OverlayLines)

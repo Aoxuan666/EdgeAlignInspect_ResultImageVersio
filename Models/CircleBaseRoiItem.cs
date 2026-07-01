@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 
 namespace EdgeAlignInspect
 {
@@ -13,6 +13,8 @@ namespace EdgeAlignInspect
 
 		public CircleRoiF Circle2 { get; set; }
 
+		public bool UseTemplateTransform { get; set; } = true;
+
 		public CaliperParameters Caliper { get; set; } = EdgeInspectJob.CreateDefaultCircleCaliper();
 
 		public CircleBaseRoiItem DeepClone()
@@ -23,6 +25,7 @@ namespace EdgeAlignInspect
 				Name = Name,
 				Circle1 = Circle1,
 				Circle2 = Circle2,
+				UseTemplateTransform = UseTemplateTransform,
 				Caliper = (Caliper?.DeepClone() ?? EdgeInspectJob.CreateDefaultCircleCaliper())
 			};
 		}

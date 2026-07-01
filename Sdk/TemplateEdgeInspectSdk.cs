@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Drawing;
 using System.Windows.Forms;
 
@@ -100,13 +100,15 @@ namespace EdgeAlignInspect
 		/// <returns>检测结果。</returns>
 		public EdgeInspectResult RunInspection(Bitmap image, EdgeInspectJob job, EdgeInspectionToleranceOptions options, bool returnResultImage)
 		{
+			InspectionLanguage language = job?.Language ?? InspectionLanguage.Chinese;
 			if (image == null)
 			{
 				return new EdgeInspectResult
 				{
 					Success = false,
 					NgReasons = NgReason.ParameterInvalid,
-					Message = "Input image is null."
+					Language = language,
+					Message = LocalizedText.Message("输入图像为空。", language)
 				};
 			}
 			if (job == null)
@@ -115,16 +117,19 @@ namespace EdgeAlignInspect
 				{
 					Success = false,
 					NgReasons = NgReason.ParameterInvalid,
-					Message = "Job parameter is null."
+					Language = InspectionLanguage.Chinese,
+					Message = "Job 参数为空。"
 				};
 			}
+			language = job.Language;
 			if (options == null)
 			{
 				return new EdgeInspectResult
 				{
 					Success = false,
 					NgReasons = NgReason.ParameterInvalid,
-					Message = "Tolerance options parameter is null."
+					Language = language,
+					Message = LocalizedText.Message("公差参数为空。", language)
 				};
 			}
 			string validationMessage;
@@ -134,7 +139,8 @@ namespace EdgeAlignInspect
 				{
 					Success = false,
 					NgReasons = NgReason.ParameterInvalid,
-					Message = validationMessage
+					Language = language,
+					Message = LocalizedText.Message(validationMessage, language)
 				};
 			}
 			try
@@ -175,7 +181,8 @@ namespace EdgeAlignInspect
 				{
 					Success = false,
 					NgReasons = NgReason.AlgorithmException,
-					Message = "Algorithm exception: " + ex.Message
+					Language = language,
+					Message = LocalizedText.Message("算法异常：", language) + ex.Message
 				};
 			}
 		}
@@ -210,22 +217,22 @@ namespace EdgeAlignInspect
 		{
 			if (options == null)
 			{
-				message = "Tolerance options parameter is null.";
+				message = "公差参数为空。";
 				return false;
 			}
 			if (options.BurrToleranceMm < 0.0 || options.DentToleranceMm < 0.0 || options.OverEdgeToleranceMm < 0.0 || options.CopperLeakToleranceMm < 0.0)
 			{
-				message = "All tolerances must be >= 0.";
+				message = "所有公差必须 >= 0。";
 				return false;
 			}
 			if (options.PixelResolutionX <= 0.0)
 			{
-				message = "Pixel resolution X must be > 0.";
+				message = "X 方向像素分辨率必须 > 0。";
 				return false;
 			}
 			if (options.PixelResolutionY <= 0.0)
 			{
-				message = "Pixel resolution Y must be > 0.";
+				message = "Y 方向像素分辨率必须 > 0。";
 				return false;
 			}
 			message = "";

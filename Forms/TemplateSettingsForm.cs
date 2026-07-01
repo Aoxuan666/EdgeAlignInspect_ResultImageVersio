@@ -44,6 +44,7 @@ namespace EdgeAlignInspect
 			{
 				_job.TemplateRoi = CreateDefaultTemplateRoi(_bitmap);
 			}
+			ApplyLanguageToUi();
 			_featurePoints = _job.TeachData != null && _job.TeachData.FeaturePoints != null
 				? new List<PointF>(_job.TeachData.FeaturePoints)
 				: new List<PointF>();
@@ -53,6 +54,7 @@ namespace EdgeAlignInspect
 			LoadJobToControls();
 			BindEvents();
 			canvas.LoadBitmap(_bitmap);
+			canvas.Language = _job.Language;
 			canvas.AutoClearOverlaysOnRoiEdit = false;
 			canvas.SetRois(_job.TemplateRoi, default(RotRectF), default(RotRectF));
 			canvas.SetSelection(CanvasRoiKind.Template, 0);
@@ -173,6 +175,33 @@ namespace EdgeAlignInspect
 			chkOuterOnly.CheckedChanged += delegate { PullControlsToJob(); };
 		}
 
+		private string T(string text)
+		{
+			return LocalizedText.Message(text, _job?.Language ?? InspectionLanguage.Chinese);
+		}
+
+		private void ApplyLanguageToUi()
+		{
+			InspectionLanguage language = _job?.Language ?? InspectionLanguage.Chinese;
+			ApplyLanguageToControl(this, language);
+		}
+
+		private static void ApplyLanguageToControl(Control control, InspectionLanguage language)
+		{
+			if (control == null)
+			{
+				return;
+			}
+			if (!string.IsNullOrEmpty(control.Text))
+			{
+				control.Text = LocalizedText.Ui(control.Text, language);
+			}
+			foreach (Control child in control.Controls)
+			{
+				ApplyLanguageToControl(child, language);
+			}
+		}
+
 		private void FixTemplateLayout()
 		{
 			if (splitMain == null || splitMain.IsDisposed || splitMain.ClientSize.Width <= 0)
@@ -263,10 +292,10 @@ namespace EdgeAlignInspect
 				_job.Normalize();
 				return true;
 			}
-			catch (Exception ex)
+				catch (Exception ex)
 			{
 				lblStatus.Text = ex.Message;
-				MessageBox.Show(this, ex.Message, "Template Settings", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+				MessageBox.Show(this, ex.Message, T("模板设置"), MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
 				return false;
 			}
 		}
@@ -279,7 +308,7 @@ namespace EdgeAlignInspect
 			}
 			PullControlsToJob();
 			ClearTeachModelKeepEraseStrokes();
-			lblStatus.Text = "参数已修改，请重新提取外轮廓点。";
+			lblStatus.Text = T("参数已修改，请重新提取外轮廓点。");
 		}
 
 		private void ClearTeachModelKeepEraseStrokes()
@@ -301,16 +330,16 @@ namespace EdgeAlignInspect
 				_featurePoints = ApplyEraseStrokes(_featurePoints);
 				ClearTeachModelKeepEraseStrokes();
 				RefreshFeatureOverlay();
-				lblStatus.Text = _featurePoints.Count > 0 ? "已提取外轮廓特征点。" : "没有提取到特征点，请调整 ROI 或阈值。";
+				lblStatus.Text = _featurePoints.Count > 0 ? T("已提取外轮廓特征点。") : T("没有提取到特征点，请调整 ROI 或阈值。");
 				if (showMessage && _featurePoints.Count == 0)
 				{
-					MessageBox.Show(this, lblStatus.Text, "模板设置", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+					MessageBox.Show(this, lblStatus.Text, T("模板设置"), MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
 				}
 			}
 			catch (Exception ex)
 			{
 				lblStatus.Text = ex.Message;
-				MessageBox.Show(this, ex.Message, "提取失败", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+				MessageBox.Show(this, ex.Message, T("提取失败"), MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
 			}
 		}
 
@@ -328,12 +357,12 @@ namespace EdgeAlignInspect
 				_job.TeachData.EraseStrokes = CloneEraseStrokes(_eraseStrokes);
 				_featurePoints = new List<PointF>(teachData.FeaturePoints ?? new List<PointF>());
 				RefreshFeatureOverlay();
-				lblStatus.Text = "模型创建完成，后续匹配将使用外轮廓。";
+				lblStatus.Text = T("模型创建完成，后续匹配将使用外轮廓。");
 			}
 			catch (Exception ex)
 			{
 				lblStatus.Text = ex.Message;
-				MessageBox.Show(this, ex.Message, "创建模型失败", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+				MessageBox.Show(this, ex.Message, T("创建模型失败"), MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
 			}
 		}
 
@@ -346,7 +375,7 @@ namespace EdgeAlignInspect
 			try
 			{
 				PullControlsToJob();
-				SetBusy(true, "正在创建模型...");
+				SetBusy(true, T("正在创建模型..."));
 				EdgeInspectJob workJob = _job.DeepClone();
 				List<PointF> workPoints = new List<PointF>(_featurePoints);
 				TemplateTeachData teachData = await Task.Run(delegate
@@ -362,12 +391,12 @@ namespace EdgeAlignInspect
 				_job.TeachData.EraseStrokes = CloneEraseStrokes(_eraseStrokes);
 				_featurePoints = new List<PointF>(teachData.FeaturePoints ?? new List<PointF>());
 				RefreshFeatureOverlay();
-				lblStatus.Text = "模型创建完成，可点击测试匹配。";
+				lblStatus.Text = T("模型创建完成，可点击测试匹配。");
 			}
 			catch (Exception ex)
 			{
 				lblStatus.Text = ex.Message;
-				MessageBox.Show(this, ex.Message, "创建模型失败", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+				MessageBox.Show(this, ex.Message, T("创建模型失败"), MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
 			}
 			finally
 			{
@@ -386,10 +415,10 @@ namespace EdgeAlignInspect
 				PullControlsToJob();
 				if (_job.TeachData == null || !_job.TeachData.HasTemplate)
 				{
-					MessageBox.Show(this, "请先创建模型。", "测试匹配", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+					MessageBox.Show(this, T("请先创建模型。"), T("测试匹配"), MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
 					return;
 				}
-				SetBusy(true, "正在测试匹配...");
+				SetBusy(true, T("正在测试匹配..."));
 				EdgeInspectJob workJob = _job.DeepClone();
 				TemplateMatchQuickTestResult result = await Task.Run(delegate
 				{
@@ -409,14 +438,14 @@ namespace EdgeAlignInspect
 				{
 					canvas.ShowRuntimeRois = false;
 					lblStatus.Text = result.Message;
-					MessageBox.Show(this, result.Message, "测试匹配", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+					MessageBox.Show(this, result.Message, T("测试匹配"), MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
 				}
 				canvas.Invalidate();
 			}
 			catch (Exception ex)
 			{
 				lblStatus.Text = ex.Message;
-				MessageBox.Show(this, ex.Message, "测试匹配失败", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+				MessageBox.Show(this, ex.Message, T("测试匹配失败"), MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
 			}
 			finally
 			{
@@ -446,9 +475,9 @@ namespace EdgeAlignInspect
 			_eraseMode = enabled;
 			_erasing = false;
 			canvas.AllowRoiEditing = !enabled;
-			btnErase.Text = enabled ? "退出擦除" : "擦除点";
+			btnErase.Text = enabled ? T("退出擦除") : T("擦除点");
 			btnErase.BackColor = enabled ? Color.FromArgb(255, 225, 160) : SystemColors.Control;
-			lblStatus.Text = enabled ? "擦除模式：按住左键擦除外轮廓点。" : "已退出擦除模式。";
+			lblStatus.Text = enabled ? T("擦除模式：按住左键擦除外轮廓点。") : T("已退出擦除模式。");
 		}
 
 		private void EraseAt(PointF center)
@@ -470,7 +499,7 @@ namespace EdgeAlignInspect
 			{
 				ClearTeachModelKeepEraseStrokes();
 				RefreshFeatureOverlayForErase();
-				lblStatus.Text = "已擦除部分特征点，请重新创建模型。";
+				lblStatus.Text = T("已擦除部分特征点，请重新创建模型。");
 			}
 			else
 			{
@@ -507,9 +536,9 @@ namespace EdgeAlignInspect
 					Color = Color.FromArgb(255, 170, 30)
 				});
 			}
-			lblCount.Text = "特征点: " + _featurePoints.Count;
+			lblCount.Text = T("特征点") + ": " + _featurePoints.Count;
 			canvas.HudText = "Points: " + GetRealFeatureCount(_featurePoints);
-			lblCount.Text = "特征点: " + GetRealFeatureCount(_featurePoints);
+			lblCount.Text = T("特征点") + ": " + GetRealFeatureCount(_featurePoints);
 			canvas.HudTextColor = Color.FromArgb(255, 220, 120);
 			AddEraseBrushOverlay();
 			canvas.Invalidate();

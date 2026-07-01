@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -32,6 +32,8 @@ namespace EdgeAlignInspect
 		public DefectDetectMode DetectMode { get; set; } = DefectDetectMode.Both;
 
 		public TemplateTeachData TeachData { get; set; } = new TemplateTeachData();
+
+		public InspectionLanguage Language { get; set; } = InspectionLanguage.Chinese;
 
 		public bool UseExternalBurrTolerance { get; set; } = false;
 
@@ -205,6 +207,7 @@ namespace EdgeAlignInspect
 				BaseRois.Add(new BaseRoiItem
 				{
 					Name = $"基准{num}",
+					UseTemplateTransform = true,
 					Caliper = (BaseCaliper?.DeepClone() ?? CreateDefaultBaseCaliper())
 				});
 			}
@@ -227,6 +230,7 @@ namespace EdgeAlignInspect
 				DetectItems.Add(new DetectRoiItem
 				{
 					Name = $"检测{num}",
+					UseTemplateTransform = true,
 					UseReferenceLine = UseReferenceLine,
 					BaseRoiIndex = 0,
 					BaseRoiId = ((BaseRois != null && BaseRois.Count > 0) ? (BaseRois[0]?.Id ?? "") : ""),

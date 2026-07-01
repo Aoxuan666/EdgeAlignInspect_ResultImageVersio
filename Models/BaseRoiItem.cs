@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 
 namespace EdgeAlignInspect
 {
@@ -11,6 +11,8 @@ namespace EdgeAlignInspect
 
 		public RotRectF Roi { get; set; }
 
+		public bool UseTemplateTransform { get; set; } = true;
+
 		public CaliperParameters Caliper { get; set; } = EdgeInspectJob.CreateDefaultBaseCaliper();
 
 		public BaseRoiItem DeepClone()
@@ -20,6 +22,7 @@ namespace EdgeAlignInspect
 				Id = Id,
 				Name = Name,
 				Roi = Roi,
+				UseTemplateTransform = UseTemplateTransform,
 				Caliper = (Caliper?.DeepClone() ?? EdgeInspectJob.CreateDefaultBaseCaliper())
 			};
 		}

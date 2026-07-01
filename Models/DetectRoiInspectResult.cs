@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 
@@ -167,7 +167,9 @@ namespace EdgeAlignInspect
 
 		public NgReason NgReasons { get; set; } = NgReason.None;
 
-		public string NgReasonText => NgReasonHelper.ToText(NgReasons);
+		public InspectionLanguage Language { get; set; } = InspectionLanguage.Chinese;
+
+		public string NgReasonText => NgReasonHelper.ToText(NgReasons, Language);
 
 		public int BurrCount { get; set; }
 

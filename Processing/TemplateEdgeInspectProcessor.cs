@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -1219,7 +1219,7 @@ namespace EdgeAlignInspect
 					return new TemplateMatchQuickTestResult
 					{
 						Found = false,
-						Message = "未找到匹配目标。"
+						Message = LocalizedText.Message("未找到匹配目标。", job.Language)
 					};
 				}
 				HOperatorSet.VectorAngleToRigid(job.TeachData.RefRow, job.TeachData.RefCol, 0.0, row[0], column[0], angle[0], out var homMat2D);
@@ -1232,7 +1232,7 @@ namespace EdgeAlignInspect
 					Angle = angle[0].D,
 					TemplateRoiCur = TransformRotRect(job.TemplateRoi, homMat2D),
 					MatchContourPoints = TransformPoints(job.TeachData.FeaturePoints, homMat2D),
-					Message = $"匹配成功，分数={score[0].D:F3}"
+					Message = LocalizedText.Message($"匹配成功，分数={score[0].D:F3}", job.Language)
 				};
 			}
 			finally
@@ -1280,6 +1280,7 @@ namespace EdgeAlignInspect
 			bool flag = job.UseExternalBurrTolerance && job.ExternalBurrTolerance >= 0.0 && job.PixelResolutionX > 0.0 && job.PixelResolutionY > 0.0;
 			EdgeInspectResult edgeInspectResult = new EdgeInspectResult
 			{
+				Language = job.Language,
 				DetectMode = job.DetectMode,
 				TemplateMatchEnabled = job.Match.Enabled,
 				TemplateMatchOk = !job.Match.Enabled,
@@ -1315,6 +1316,7 @@ namespace EdgeAlignInspect
 						edgeInspectResult.NgReasons |= NgReason.TemplateMatchFailed;
 						edgeInspectResult.FailedItems.Add("模板匹配失败");
 						edgeInspectResult.Message = "模板匹配失败";
+						LocalizedText.ApplyToResult(edgeInspectResult, job.Language);
 						return edgeInspectResult;
 					}
 					edgeInspectResult.TemplateMatchOk = true;
@@ -1337,7 +1339,7 @@ namespace EdgeAlignInspect
 					{
 						Name = $"基准{i + 1}"
 					};
-					RotRectF rotRectF = (flag2 ? TransformRotRect(baseRoiItem.Roi, homMat2D) : baseRoiItem.Roi);
+					RotRectF rotRectF = (flag2 && baseRoiItem.UseTemplateTransform ? TransformRotRect(baseRoiItem.Roi, homMat2D) : baseRoiItem.Roi);
 					CaliperParameters caliperParameters = (baseRoiItem.Caliper ?? job.ResolveBaseCaliper(i) ?? EdgeInspectJob.CreateDefaultBaseCaliper()).DeepClone();
 					BaseRoiInspectResult baseRoiInspectResult = new BaseRoiInspectResult
 					{
@@ -1369,8 +1371,8 @@ namespace EdgeAlignInspect
 					{
 						Name = $"圆基准{j + 1}"
 					};
-					CircleRoiF circleRoiF = (flag2 ? TransformCircleRoi(circleBaseRoiItem.Circle1, homMat2D) : circleBaseRoiItem.Circle1);
-					CircleRoiF circleRoiF2 = (flag2 ? TransformCircleRoi(circleBaseRoiItem.Circle2, homMat2D) : circleBaseRoiItem.Circle2);
+					CircleRoiF circleRoiF = (flag2 && circleBaseRoiItem.UseTemplateTransform ? TransformCircleRoi(circleBaseRoiItem.Circle1, homMat2D) : circleBaseRoiItem.Circle1);
+					CircleRoiF circleRoiF2 = (flag2 && circleBaseRoiItem.UseTemplateTransform ? TransformCircleRoi(circleBaseRoiItem.Circle2, homMat2D) : circleBaseRoiItem.Circle2);
 					CaliperParameters caliperParameters2 = (circleBaseRoiItem.Caliper ?? job.CircleCaliper ?? EdgeInspectJob.CreateDefaultCircleCaliper()).DeepClone();
 					CircleBaseRoiInspectResult circleBaseRoiInspectResult = new CircleBaseRoiInspectResult
 					{
@@ -1413,7 +1415,7 @@ namespace EdgeAlignInspect
 					{
 						Name = $"圆点基准{k + 1}"
 					};
-					CircleRoiF circleRoiF3 = (flag2 ? TransformCircleRoi(circlePointRoiItem.Circle, homMat2D) : circlePointRoiItem.Circle);
+					CircleRoiF circleRoiF3 = (flag2 && circlePointRoiItem.UseTemplateTransform ? TransformCircleRoi(circlePointRoiItem.Circle, homMat2D) : circlePointRoiItem.Circle);
 					CaliperParameters caliperParameters3 = (circlePointRoiItem.Caliper ?? job.CircleCaliper ?? EdgeInspectJob.CreateDefaultCircleCaliper()).DeepClone();
 					CirclePointRoiInspectResult circlePointRoiInspectResult = new CirclePointRoiInspectResult
 					{
@@ -1458,7 +1460,7 @@ namespace EdgeAlignInspect
 						continue;
 					}
 					num++;
-					RotRectF rotRectF2 = (flag2 ? TransformRotRect(detectRoiItem.Roi, homMat2D) : detectRoiItem.Roi);
+					RotRectF rotRectF2 = (flag2 && detectRoiItem.UseTemplateTransform ? TransformRotRect(detectRoiItem.Roi, homMat2D) : detectRoiItem.Roi);
 					CaliperParameters caliperParameters4 = (detectRoiItem.Caliper ?? job.ResolveDetectCaliper(l) ?? EdgeInspectJob.CreateDefaultDetectCaliper()).DeepClone();
 					int num2 = job.ResolveBaseRoiIndex(detectRoiItem.BaseRoiId, detectRoiItem.BaseRoiIndex);
 					int num3 = job.ResolveCircleBaseRoiIndex(detectRoiItem.CircleBaseRoiId, detectRoiItem.CircleBaseRoiIndex);
@@ -1466,6 +1468,7 @@ namespace EdgeAlignInspect
 					DetectRoiInspectResult detectRoiInspectResult = new DetectRoiInspectResult
 					{
 						Index = l,
+						Language = job.Language,
 						Name = (string.IsNullOrWhiteSpace(detectRoiItem.Name) ? $"检测{l + 1}" : detectRoiItem.Name),
 						Enabled = true,
 						RoiCur = rotRectF2,
@@ -1608,6 +1611,7 @@ namespace EdgeAlignInspect
 				string text2 = (flag ? $" | 外部允差(mm)：毛刺={job.ExternalBurrTolerance:F4} 凹陷={job.ExternalDentTolerance:F4} 超边={job.ExternalOverEdgeTolerance:F4} 漏铜={job.ExternalCopperLeakTolerance:F4} | 解析度X={job.PixelResolutionX:F6}mm/px | 解析度Y={job.PixelResolutionY:F6}mm/px | 最大偏差={edgeInspectResult.MaxPositiveDeltaValue:F4}mm" : $" | 本地毛刺允差={edgeInspectResult.BurrTolerance:F2}px | 本地凹陷允差={edgeInspectResult.DentTolerance:F2}px | 最大偏差={edgeInspectResult.MaxPositiveDeltaPx:F2}px");
 				string text3 = ((edgeInspectResult.FailedItems.Count > 0) ? (" | " + string.Join("；", edgeInspectResult.FailedItems.Take(6))) : "");
 				edgeInspectResult.Message = (edgeInspectResult.Success ? $"OK | 模式={detectModeText} | 判定={judgeModeText} | 检测ROI={num}{text2} | 局部Δ(min/max/mean)={edgeInspectResult.DeltaMin:F2}/{edgeInspectResult.DeltaMax:F2}/{edgeInspectResult.DeltaMean:F2}px" : $"NG | 原因={edgeInspectResult.NgReasonText} | 模式={detectModeText} | 判定={judgeModeText} | 检测ROI={num} | 失败项={edgeInspectResult.DetectResults.Count((DetectRoiInspectResult x) => !x.Success)} | 毛刺={edgeInspectResult.BurrCount} 凹陷={edgeInspectResult.DentCount} 超边={edgeInspectResult.OverEdgeCount} 漏铜={edgeInspectResult.CopperLeakCount}{text2} | 局部Δ(min/max/mean)={edgeInspectResult.DeltaMin:F2}/{edgeInspectResult.DeltaMax:F2}/{edgeInspectResult.DeltaMean:F2}px{text3}");
+				LocalizedText.ApplyToResult(edgeInspectResult, job.Language);
 				return edgeInspectResult;
 			}
 			finally

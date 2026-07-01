@@ -91,6 +91,8 @@
     <Compile Include="Models\EdgeInspectResult.cs" />
     <Compile Include="Models\EdgeLineFit.cs" />
     <Compile Include="Models\EdgePointResult.cs" />
+    <Compile Include="Models\InspectionLanguage.cs" />
+    <Compile Include="Models\LocalizedText.cs" />
     <Compile Include="Models\NgReason.cs" />
     <Compile Include="Models\NgReasonHelper.cs" />
     <Compile Include="Models\ReferenceBaseKind.cs" />
