@@ -1555,7 +1555,7 @@ namespace EdgeAlignInspect
 						}
 						else
 						{
-							EvaluateOverallDistanceFromMeasurePoints(detectRoiInspectResult, edgeLineFit);
+							EvaluateOverallDistanceFromFittedLine(detectRoiInspectResult, edgeLineFit);
 						}
 					}
 					if (!detectRoiInspectResult.Success)
@@ -1718,8 +1718,7 @@ namespace EdgeAlignInspect
 				dr.Message = "未取得检测点";
 				return;
 			}
-			bool referenceDistanceMode = dr.UseReferenceLine && dr.JudgeLine != null && dr.JudgeLine.Success;
-			EdgeLineFit distanceLine = referenceDistanceMode ? dr.JudgeLine : dr.FittedLine;
+			EdgeLineFit distanceLine = dr.FittedLine;
 			SignedLine signedLine = SignedLine.FromLine(distanceLine.P1, distanceLine.P2);
 			bool flag = mode == DefectDetectMode.Both || mode == DefectDetectMode.BurrOnly;
 			bool flag2 = mode == DefectDetectMode.Both || mode == DefectDetectMode.DentOnly;
@@ -1730,22 +1729,18 @@ namespace EdgeAlignInspect
 			double num4 = double.PositiveInfinity;
 			double num5 = double.NegativeInfinity;
 			double num6 = 0.0;
-			double num7 = referenceDistanceMode ? 1.0 : ResolvePositiveDirectionScale(detRoi, signedLine);
+			double num7 = ResolvePositiveDirectionScale(detRoi, signedLine);
 			double physicalDistancePerPixel = GetPhysicalDistancePerPixel(signedLine, dr.PixelResolutionX, dr.PixelResolutionY);
 			for (int i = 0; i < dr.FittedLine.MeasurePoints.Count; i++)
 			{
 				PointF pointF = dr.FittedLine.MeasurePoints[i];
 				double num8 = signedLine.SignedDistance(pointF);
-				double num9 = referenceDistanceMode ? Math.Abs(num8) : num8 * num7;
-				double num10 = referenceDistanceMode ? (num9 - dr.NominalDistancePx) : num9;
+				double num9 = num8 * num7;
+				double num10 = num9;
 				double signedDistanceValue = num9 * physicalDistancePerPixel;
 				double num11 = num10 * physicalDistancePerPixel;
-				bool flag4 = referenceDistanceMode
-					? (flag3 ? (flag && num11 > dr.ExternalBurrTolerance) : (flag && num10 > dr.BurrTolerancePx))
-					: (flag3 ? (flag && num11 < 0.0 - dr.ExternalBurrTolerance) : (flag && num10 < 0.0 - dr.BurrTolerancePx));
-				bool flag5 = referenceDistanceMode
-					? (flag3 ? (flag2 && num11 < 0.0 - dr.ExternalDentTolerance) : (flag2 && num10 < 0.0 - dr.DentTolerancePx))
-					: (flag3 ? (flag2 && num11 > dr.ExternalDentTolerance) : (flag2 && num10 > dr.DentTolerancePx));
+				bool flag4 = flag3 ? (flag && num11 < 0.0 - dr.ExternalBurrTolerance) : (flag && num10 < 0.0 - dr.BurrTolerancePx);
+				bool flag5 = flag3 ? (flag2 && num11 > dr.ExternalDentTolerance) : (flag2 && num10 > dr.DentTolerancePx);
 				if (flag4)
 				{
 					dr.BurrCount++;
@@ -1828,6 +1823,16 @@ namespace EdgeAlignInspect
 			EvaluateOverallDistance(dr, referenceLine, measurePoint, null);
 		}
 
+		private static void EvaluateOverallDistanceFromFittedLine(DetectRoiInspectResult dr, EdgeLineFit referenceLine)
+		{
+			if (dr == null || dr.FittedLine == null || !dr.FittedLine.Success || referenceLine == null || !referenceLine.Success)
+			{
+				return;
+			}
+			PointF measurePoint = new PointF((dr.FittedLine.P1.X + dr.FittedLine.P2.X) * 0.5f, (dr.FittedLine.P1.Y + dr.FittedLine.P2.Y) * 0.5f);
+			EvaluateOverallDistance(dr, referenceLine, measurePoint);
+		}
+
 		private static void EvaluateOverallDistanceFromMeasurePoints(DetectRoiInspectResult dr, EdgeLineFit referenceLine)
 		{
 			if (dr == null || dr.FittedLine == null || dr.FittedLine.MeasurePoints == null || dr.FittedLine.MeasurePoints.Count == 0 || referenceLine == null || !referenceLine.Success)
@@ -1870,8 +1875,9 @@ namespace EdgeAlignInspect
 				double num = (measuredDistancePx.HasValue ? measuredDistancePx.Value : Math.Abs(value));
 				double physicalDistancePerPixel = GetPhysicalDistancePerPixel(signedLine, dr.PixelResolutionX, dr.PixelResolutionY);
 				double num2 = num * physicalDistancePerPixel;
-				double num3 = num - dr.NominalDistancePx;
-				double num4 = num3 * physicalDistancePerPixel;
+				double num5 = GetNominalDistanceValue(dr);
+				double num4 = num2 - num5;
+				double num3 = (physicalDistancePerPixel > 0.0) ? (num4 / physicalDistancePerPixel) : (num - dr.NominalDistancePx);
 				bool flag = dr.UseExternalBurrTolerance && dr.ExternalBurrTolerance >= 0.0 && dr.PixelResolutionX > 0.0 && dr.PixelResolutionY > 0.0;
 				bool flag2 = (flag ? (num4 > dr.ExternalOverEdgeTolerance) : (num3 > dr.BurrTolerancePx));
 				bool flag3 = (flag ? (num4 < 0.0 - dr.ExternalCopperLeakTolerance) : (num3 < 0.0 - dr.DentTolerancePx));
@@ -1902,7 +1908,6 @@ namespace EdgeAlignInspect
 					dr.Success = false;
 				}
 				string text = (flag ? $"外部允差(mm)：超边={dr.ExternalOverEdgeTolerance:F4} | 漏铜={dr.ExternalCopperLeakTolerance:F4}" : $"毛刺允差={dr.BurrTolerancePx:F2}px | 凹陷允差={dr.DentTolerancePx:F2}px");
-				double num5 = dr.NominalDistancePx * physicalDistancePerPixel;
 				string text2 = $" | 整体距离={num2:F4}mm 标准={num5:F4}mm Δ={num4:+0.0000;-0.0000;0.0000}mm | 像素距离={num:F2}px Δ={num3:+0.00;-0.00;0.00}px | {text}";
 				if (flag2)
 				{
@@ -2048,6 +2053,33 @@ namespace EdgeAlignInspect
 			double num2 = line.NRow * pixelResolutionY;
 			double num3 = Math.Sqrt(num * num + num2 * num2);
 			return (num3 > 0.0) ? num3 : ((pixelResolutionX + pixelResolutionY) * 0.5);
+		}
+
+		private static double GetNominalDistanceValue(DetectRoiInspectResult dr)
+		{
+			if (dr == null)
+			{
+				return 0.0;
+			}
+			double pixelResolutionX = dr.PixelResolutionX;
+			double pixelResolutionY = dr.PixelResolutionY;
+			if (pixelResolutionX <= 0.0 && pixelResolutionY > 0.0)
+			{
+				pixelResolutionX = pixelResolutionY;
+			}
+			if (pixelResolutionY <= 0.0 && pixelResolutionX > 0.0)
+			{
+				pixelResolutionY = pixelResolutionX;
+			}
+			if (pixelResolutionX <= 0.0)
+			{
+				pixelResolutionX = 1.0;
+			}
+			if (pixelResolutionY <= 0.0)
+			{
+				pixelResolutionY = 1.0;
+			}
+			return dr.NominalDistancePx * ((pixelResolutionX + pixelResolutionY) * 0.5);
 		}
 
 		private static PointF ProjectPointToLine(PointF p, PointF a, PointF b)

@@ -2636,12 +2636,12 @@ namespace EdgeAlignInspect
 			{
 				DrawCircleFitOverlay(circlePointResult.Circle, Color.DeepSkyBlue, circlePointResult.Name);
 			}
-			foreach (DetectRoiInspectResult item2 in r.DetectResults.Where((DetectRoiInspectResult x) => x != null && !x.UseReferenceLine))
+			foreach (DetectRoiInspectResult item2 in r.DetectResults.Where((DetectRoiInspectResult x) => x != null))
 			{
-				if (item2.JudgeLine != null && item2.JudgeLine.Success)
+				if (item2.FittedLine != null && item2.FittedLine.Success)
 				{
-					PointF p9 = item2.JudgeLine.P1;
-					PointF p10 = item2.JudgeLine.P2;
+					PointF p9 = item2.FittedLine.P1;
+					PointF p10 = item2.FittedLine.P2;
 					if (_src != null && TryGetLineAcrossImage(p9, p10, _src.Width, _src.Height, out var p11, out var p12))
 					{
 						canvas.OverlayLines.Add(new ColoredPolyline
@@ -2717,7 +2717,7 @@ namespace EdgeAlignInspect
 					{
 						if (detectResult.UseReferenceLine)
 						{
-							label = ((num8 == num4) ? $"{detectResult.Name} MAX 差值={edgePointResult.DeltaValue:+0.0000;-0.0000;0.0000}mm" : ((num8 != num5) ? $"距离={edgePointResult.SignedDistanceValue:0.0000}mm 差值={edgePointResult.DeltaValue:+0.0000;-0.0000;0.0000}mm" : $"{detectResult.Name} MIN 差值={edgePointResult.DeltaValue:+0.0000;-0.0000;0.0000}mm"));
+							label = ((num8 == num4) ? $"{detectResult.Name} MAX 局部={edgePointResult.DeltaValue:+0.0000;-0.0000;0.0000}mm" : ((num8 != num5) ? $"局部={edgePointResult.DeltaValue:+0.0000;-0.0000;0.0000}mm" : $"{detectResult.Name} MIN 局部={edgePointResult.DeltaValue:+0.0000;-0.0000;0.0000}mm"));
 						}
 						else
 						{
@@ -2798,7 +2798,7 @@ namespace EdgeAlignInspect
 					Radius = 0f,
 					Color = lineColor,
 					Label = dr.UseReferenceLine
-						? $"{dr.Name} {tag} 差值={edgePointResult.DeltaValue:+0.0000;-0.0000;0.0000}mm"
+						? $"{dr.Name} {tag} 局部={edgePointResult.DeltaValue:+0.0000;-0.0000;0.0000}mm"
 						: $"{dr.Name} {tag} {edgePointResult.SignedDistanceValue:0.0000}mm"
 				});
 			}
